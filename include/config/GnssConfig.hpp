@@ -1315,6 +1315,21 @@ namespace GnssProcessor {
         std::filesystem::path getProductListPath() const { return product_list_path_; }
 
         /**
+         * @brief Whether the run reads a bias file (`files.use_bias_file`, default true).
+         *
+         * True (the default): PathResolver returns the observation day's `.bia` / `.bsx` file with
+         * the other products, as it always has.  False: PathResolver returns no `.bia` and no
+         * `.bsx` file in either data mode (internal: the file is not globbed; production: it is
+         * removed from the downloader's list), so nothing of the file reaches the run: neither its
+         * values nor its `SATELLITE_CLOCK_REFERENCE_OBSERVABLES` lines nor its coverage.  A `.bia`
+         * or `.bsx` named explicitly in the configuration (a line of `files.product_list_path`)
+         * together with false is a configuration error: loadFromJson() refuses it.
+         *
+         * @return true when a bias file found by PathResolver is read.
+         */
+        bool useBiasFile() const { return use_bias_file_; }
+
+        /**
          * @brief Gets the list of product file paths.
          * @return Vector of product file paths (e.g., SP3, CLK).
          */
@@ -10429,6 +10444,7 @@ namespace GnssProcessor {
         std::vector<std::string> config_extends_chain_;
         std::vector<std::string> excluded_satellites_;                ///< Satellites excluded from processing (e.g. "E14", "E18").
         std::filesystem::path product_list_path_;            ///< Path to product list file.
+        bool use_bias_file_{true};                           ///< files.use_bias_file: read a .bia / .bsx file PathResolver finds.
         std::vector<std::filesystem::path> product_paths_;   ///< Product file paths (SP3, CLK, etc.).
         std::filesystem::path observation_path_;             ///< Path to observation RINEX file.
         std::filesystem::path navigation_path_;              ///< Path to navigation RINEX file.

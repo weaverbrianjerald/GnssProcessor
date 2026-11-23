@@ -834,6 +834,7 @@ add_executable(gnss_tests
     tests/test_log_manager_init.cpp
     tests/test_gps_scale_stamp.cpp
     tests/test_product_cache_load_failure.cpp
+    tests/test_path_resolver_bias_file.cpp
     tests/test_windup_census_config.cpp
     tests/test_windup_gap_bridge.cpp
     tests/test_windup_restart_response_config.cpp

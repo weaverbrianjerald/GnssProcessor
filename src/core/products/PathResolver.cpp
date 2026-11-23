@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <utility>
 #include <vector>
 #include <spdlog/spdlog.h>
@@ -159,6 +160,11 @@ bool PathResolver::resolve(ResolvedPaths& resolved) {
     log->info("PathResolver: production mode (download root={})",
         config_.getDownloadConfig().data_root.string());
     return resolveProduction(resolved);
+}
+
+bool PathResolver::isBiasFile(const std::filesystem::path& path) {
+    const std::string ext = toLowerLocal(path.extension().string());
+    return ext == ".bia" || ext == ".bsx";
 }
 
 // ---------------------------------------------------------------------
@@ -353,7 +359,11 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
         log->info("Real-time live source: skipping SP3/CLK product discovery");
     else if (skip_clock_disc)
         log->info("RTB-4: precise orbits + live/network clocks — discovering SP3, skipping CLK");
-    append(globByExtension(obs_day_products, {".bia", ".bsx"}));
+    if (config_.useBiasFile())
+        append(globByExtension(obs_day_products, {".bia", ".bsx"}));
+    else
+        log->info("Internal mode: bias file not read (files.use_bias_file false): no .bia or .bsx "
+                  "is taken from {}", obs_day_products.string());
     append(globByExtension(obs_day_products, {".erp"}));
     append(globByExtension(obs_day_products, {".inx"}));
 
@@ -518,6 +528,14 @@ bool PathResolver::resolveProduction(ResolvedPaths& resolved) {
     resolved.observation_path = inner.observation_path;
     resolved.navigation_path  = inner.navigation_path;
     resolved.product_paths    = std::move(inner.product_paths);
+    if (!config_.useBiasFile()) {
+        auto& paths = resolved.product_paths;
+        const auto first_bias = std::remove_if(paths.begin(), paths.end(), &PathResolver::isBiasFile);
+        const auto left_out = static_cast<std::size_t>(std::distance(first_bias, paths.end()));
+        paths.erase(first_bias, paths.end());
+        log->info("Production mode: bias file not read (files.use_bias_file false): {} .bia / .bsx "
+                  "file(s) left out of the downloaded set", left_out);
+    }
     // Baseline-mode RINEX paths: production downloads are not wired for
     // arbitrary-station baseline runs (ProductResolver::resolveRinex uses one
     // configured station only).  The baseline_*_path fields stay empty, so
