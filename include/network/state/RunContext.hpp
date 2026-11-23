@@ -431,7 +431,7 @@ namespace GnssProcessor {
         /// serial tally networkRxGfDatumTally.
         NetworkRxGfDatum rx_gf_datum{NetworkRxGfDatum::PriorRefold};
         bool sta_prior_pre_pd{};  ///< Fold the station's datum rows before the addStation PD test (network.station_prior_before_pd).
-        bool rowless_park{};      ///< Park a local column with no row instead of dropping the station (network.station_rowless_column_park).
+        bool local_null_pin{};      ///< Park a local column with no row instead of dropping the station (network.station_local_null_pin).
         bool entry_cold{};        ///< A station's entry after an absence is a re-coupling with a cold entry (network.station_entry_cold).
         double rx_cb_q{};   ///< rx-CB carry RW process noise (m²/s).
         double rx_ebd_q{};  ///< Its receiver IFB (extra-band delay) columns' own (m²/s; network.rx_extra_band_delay_q); 0: rx_cb_q.

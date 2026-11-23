@@ -1,6 +1,6 @@
 /**
  * @file StationEntry.cpp
- * @brief The park of a rowless local column and the cold entry of a refused station (see
+ * @brief The pin of a refused station's null directions and the cold entry of a refused station (see
  *        StationEntry.hpp).
  */
 
@@ -22,7 +22,10 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <Eigen/Eigenvalues>
+
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <set>
 #include <tuple>
@@ -49,23 +52,63 @@ void eraseParked(Vec& v, const std::set<Eigen::Index>& parked, ColOf col_of) {
 
 }  // namespace
 
-int networkStationRowlessPark(NetworkRunContext& ctx, const NetStation& st, StationAssembly& R) {
-    if (!ctx.knobs.rowless_park) return 0;
+int networkStationNullPin(NetworkRunContext& ctx, const NetStation& st, StationAssembly& R) {
+    if (!ctx.knobs.local_null_pin) return 0;
     const Eigen::Index n_cols = R.A_r.cols();
     if (n_cols <= 0) return 0;
-    // A column has information when any row touches it or either diagonal channel holds it.
-    std::vector<char> informed(static_cast<std::size_t>(n_cols), 0);
-    for (Eigen::Index c = 0; c < n_cols; ++c)
-        if (R.A_r.rows() > 0 && R.A_r.col(c).cwiseAbs().maxCoeff() > 0.0)
-            informed[static_cast<std::size_t>(c)] = 1;
-    for (const Eigen::Index c : R.prior_cols)
-        if (c >= 0 && c < n_cols) informed[static_cast<std::size_t>(c)] = 1;
-    for (const Eigen::Index c : R.carry_cols)
-        if (c >= 0 && c < n_cols) informed[static_cast<std::size_t>(c)] = 1;
+    // The block the positive-definiteness test judges: the rows' normals and the pre-PD prior.
+    Eigen::MatrixXd N = Eigen::MatrixXd::Zero(n_cols, n_cols);
+    if (R.A_r.rows() > 0 && R.w.size() == R.A_r.rows())
+        N = R.A_r.transpose() * R.w.asDiagonal() * R.A_r;
+    for (std::size_t k = 0; k < R.prior_cols.size(); ++k) {
+        const Eigen::Index c = R.prior_cols[k];
+        if (c >= 0 && c < n_cols) N(c, c) += R.prior_dNrr(static_cast<Eigen::Index>(k));
+    }
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N);
+    if (es.info() != Eigen::Success) return 0;
+    const Eigen::VectorXd& ev = es.eigenvalues();   // ascending
+    // A null direction: an eigenvalue below 1e-12 of the largest (the kernel's own count of the
+    // directions its test rejects).  The pin's information is 1e-6 of the median of the other
+    // eigenvalues: the block then passes the pivot test (1e-12 of the median pivot), and a weakly
+    // observed direction that happens to sit below the cut is pulled toward its linearization
+    // point by at most that small share of its own information.
+    const double ev_max = ev.cwiseAbs().maxCoeff();
+    const double cut = 1e-12 * ev_max;
+    std::vector<double> kept;
+    for (Eigen::Index k = 0; k < ev.size(); ++k)
+        if (std::abs(ev(k)) >= cut) kept.push_back(std::abs(ev(k)));
+    if (kept.empty()) return 0;
+    std::nth_element(kept.begin(), kept.begin() + static_cast<std::ptrdiff_t>(kept.size() / 2),
+                     kept.end());
+    const double lambda = 1e-6 * kept[kept.size() / 2];
+    if (!(lambda > 0.0) || !std::isfinite(lambda)) return 0;
+    std::vector<Eigen::Index> nulls;
+    for (Eigen::Index k = 0; k < ev.size(); ++k)
+        if (std::abs(ev(k)) < cut) nulls.push_back(k);
+    if (nulls.empty()) return 0;
+
+    // One row per null direction: A_r row = v^T, A_s row = 0, innovation 0 (the linearization
+    // point), weight lambda.  N v = 0 makes A_r v = 0, so the row informs only the direction v.
+    const Eigen::Index m0 = R.A_r.rows();
+    const Eigen::Index add = static_cast<Eigen::Index>(nulls.size());
+    R.A_r.conservativeResize(m0 + add, Eigen::NoChange);
+    R.A_s.conservativeResize(m0 + add, Eigen::NoChange);
+    R.w.conservativeResize(m0 + add);
+    R.y.conservativeResize(m0 + add);
     std::set<Eigen::Index> parked;
-    for (Eigen::Index c = 0; c < n_cols; ++c)
-        if (!informed[static_cast<std::size_t>(c)]) parked.insert(c);
-    if (parked.empty()) return 0;
+    for (Eigen::Index j = 0; j < add; ++j) {
+        const Eigen::VectorXd v = es.eigenvectors().col(nulls[static_cast<std::size_t>(j)]);
+        R.A_r.row(m0 + j) = v.transpose();
+        R.A_s.row(m0 + j).setZero();
+        R.w(m0 + j) = lambda;
+        R.y(m0 + j) = 0.0;
+        R.row_tags.push_back(RowTag{ContributionKind::LocalNullPin, {}, {}});
+        for (Eigen::Index c = 0; c < n_cols; ++c)
+            if (std::abs(v(c)) >= 0.05) parked.insert(c);
+    }
+    R.null_pin_rows += add;
+    // A column whose carried prior is folded after the test keeps its harvest (the carry anchors it).
+    for (const Eigen::Index c : R.carry_cols) parked.erase(c);
 
     // The parked columns' names, through the assembly's own column map (the PD-drop census's).
     std::vector<std::string> names(static_cast<std::size_t>(n_cols), "?");
@@ -75,31 +118,6 @@ int networkStationRowlessPark(NetworkRunContext& ctx, const NetStation& st, Stat
         if (kv.second >= 0 && lc < names.size() && kv.first >= 0 && k < st.params.slots.size())
             names[lc] = stateLabel(st.params.slots[k], k);
     }
-
-    // The unit prior at the linearization point, merged into the pre-PD channel in column order.
-    std::vector<std::tuple<Eigen::Index, double, double, RowTag>> entries;
-    entries.reserve(R.prior_cols.size() + parked.size());
-    for (std::size_t k = 0; k < R.prior_cols.size(); ++k)
-        entries.emplace_back(R.prior_cols[k], R.prior_dNrr(static_cast<Eigen::Index>(k)),
-                             R.prior_dur(static_cast<Eigen::Index>(k)),
-                             k < R.prior_tags.size() ? R.prior_tags[k] : RowTag{});
-    for (const Eigen::Index c : parked)
-        entries.emplace_back(c, 1.0, 0.0, RowTag{ContributionKind::PriorRowlessPark, {}, {}});
-    std::sort(entries.begin(), entries.end(),
-              [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
-    const Eigen::Index n = static_cast<Eigen::Index>(entries.size());
-    R.prior_cols.resize(static_cast<std::size_t>(n));
-    R.prior_dNrr.resize(n);
-    R.prior_dur.resize(n);
-    R.prior_tags.resize(static_cast<std::size_t>(n));
-    for (Eigen::Index k = 0; k < n; ++k) {
-        const auto& e = entries[static_cast<std::size_t>(k)];
-        R.prior_cols[static_cast<std::size_t>(k)] = std::get<0>(e);
-        R.prior_dNrr(k) = std::get<1>(e);
-        R.prior_dur(k)  = std::get<2>(e);
-        R.prior_tags[static_cast<std::size_t>(k)] = std::get<3>(e);
-    }
-
     // No harvest reads a parked column: it is in none of the station's harvest lists.
     eraseParked(R.pl_rpb, parked, [](const auto& t) { return std::get<1>(t); });
     eraseParked(R.pl_cb, parked, [](const auto& t) { return std::get<1>(t); });
@@ -123,7 +141,8 @@ int networkStationRowlessPark(NetworkRunContext& ctx, const NetStation& st, Stat
     }
     ++ctx.counters.sen_park_station_epochs;
     ctx.counters.sen_park_columns += static_cast<long long>(parked.size());
-    return static_cast<int>(parked.size());
+    ctx.counters.sen_null_pin_rows += add;
+    return static_cast<int>(add);
 }
 
 StationColdDrop networkStationColdDrop(net::NetworkEntities& entities, int station,
@@ -233,7 +252,7 @@ void networkStationEntryTrack(NetworkRun& run, const NetworkEpoch& ep,
                               const std::vector<int>& parked_of,
                               const std::vector<std::string>& families_of) {
     NetworkRunContext& ctx = run.ctx;
-    if (!(ctx.knobs.rowless_park || ctx.knobs.entry_cold)) return;
+    if (!(ctx.knobs.local_null_pin || ctx.knobs.entry_cold)) return;
     // ---- From the run and the epoch ----
     net::StationTable& sta_rows = ctx.entities.stations;   // written: stations
     const std::vector<NetStation>& stations = run.setup.stations;
@@ -300,18 +319,19 @@ void networkStationEntryTrack(NetworkRun& run, const NetworkEpoch& ep,
 
 int networkStationEntryRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
-    if (!(ctx.knobs.rowless_park || ctx.knobs.entry_cold)) return 0;
+    if (!(ctx.knobs.local_null_pin || ctx.knobs.entry_cold)) return 0;
     const auto& c = ctx.counters;
     std::string fam;
     for (const auto& [k, n] : c.sen_park_family) {
         if (!fam.empty()) fam += ' ';
         fam += fmt::format("{}={}", k, n);
     }
-    if (ctx.knobs.rowless_park)
-        v.log->info("Network (station rowless-column park): {} station-epoch(s) with a parked "
-                    "column ({} column(s): [{}]), {} of them admitted; {} park episode(s) "
-                    "opened, {} closed.  0 parked is inert wiring or no rowless column.",
-                    c.sen_park_station_epochs, c.sen_park_columns,
+    if (ctx.knobs.local_null_pin)
+        v.log->info("Network (station local null pin): {} refused station-epoch(s) retried with "
+                    "{} null-direction pin row(s), {} parked column(s) [{}]; {} of them admitted; "
+                    "{} park episode(s) opened, {} closed.  0 rows is no refusal with a null "
+                    "direction (or inert wiring).",
+                    c.sen_park_station_epochs, c.sen_null_pin_rows, c.sen_park_columns,
                     fam.empty() ? std::string("none") : fam, c.sen_park_kept,
                     c.sen_park_episodes, c.sen_park_episodes_closed);
     v.log->info("Network (station entry): {} refusal(s) (decoupling edges), {} return(s) "

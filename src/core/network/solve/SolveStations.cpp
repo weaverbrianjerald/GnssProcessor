@@ -144,7 +144,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             fam = (c != std::string::npos) ? fam.substr(0, c)
                                            : (fam == "?" ? std::string("other") : fam);
             ++ctx.counters.pd_drop_family[fam];
-            if (ctx.knobs.entry_cold || ctx.knobs.rowless_park)
+            if (ctx.knobs.entry_cold || ctx.knobs.local_null_pin)
                 ctx.counters.sen_refuse_family_ep[sta.name] = fam;
         }
         ++ctx.counters.pd_drop_named;
@@ -168,17 +168,6 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
     // receives the same additions in the same order as the serial add.  The predicate is the
     // loop's own: a station is formed exactly when the loop reaches its add.  A station formed
     // after an epoch-ending break is never committed (its slot is simply left).
-    // network.station_rowless_column_park: a local column with no row and no prior is parked
-    // before the station is formed (in parallel or in the loop below), so the PD test judges the
-    // block without it.  Serial and in station order; inert when the key is off.
-    if (ctx.knobs.rowless_park) {
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (!present[i]) continue;
-            StationAssembly& R = asm_res[i];
-            if (R.empty_innov || R.state_mismatch || R.threw || !R.ok) continue;
-            networkStationRowlessPark(ctx, stations[i], R);
-        }
-    }
     std::vector<int> form_slot(stations.size(), -1);
     std::vector<NetworkNormalEquations::StationPrior> form_priors;
     if (nc.parallel_station_normals && setup.parallel_on && setup.n_threads > 1) {
@@ -235,7 +224,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             }
             log->warn("Network: station '{}' assembly failed ({}); dropping it this epoch",
                       st.name, why);
-            if (ctx.knobs.entry_cold || ctx.knobs.rowless_park)
+            if (ctx.knobs.entry_cold || ctx.knobs.local_null_pin)
                 ctx.counters.sen_refuse_family_ep[st.name] = "assembly";
             present[i] = false;
             continue;
@@ -260,32 +249,51 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                                      NetworkNormalEquations::StationPrior{
                                          R.prior_cols, R.prior_dNrr, R.prior_dur}));
         } catch (const std::exception& ex) {
-            // One station's rank-deficient / ill-conditioned local block must not
-            // cost the whole epoch in a large heterogeneous network: the station is
-            // dropped and the rest are kept (the null-space gate still guards the
-            // result).  On the legacy path the pivot is the exception: it carries
-            // the S-basis, so without it the epoch has no datum and is skipped.
-            // Prioritized: the gauge is distributed, so the pivot is dropped too (an
-            // anchor loss is caught by the null-space gate, which withholds, and the
-            // next epoch recovers).
-            if (!phase_datum_prioritized && st.is_pivot) {
-                log->warn("Network: PIVOT '{}' addStation rejected ({}); skipping epoch",
-                          st.name, ex.what());
-                ++ctx.counters.pd_drop_pivot_abort;   // the epoch-skipping case
-                pdDropEvent(st, R, "epoch_sunk");
-                epoch_ok = false;
-                break;
+            // network.station_local_null_pin: a block refused for a direction no row informs is
+            // retried once with that direction pinned at its linearization point (no other
+            // estimate moves); a station that still fails is dropped as below.  Serial, in
+            // station order.  Off: no call, the drop path as before.
+            bool admitted = false;
+            if (ctx.knobs.local_null_pin && (phase_datum_prioritized || !st.is_pivot)
+                && networkStationNullPin(ctx, st, R) > 0) {
+                try {
+                    est_index_of[i] = static_cast<int>(
+                        est.addStation(R.A_s, R.A_r, R.w, R.y,
+                                       NetworkNormalEquations::StationPrior{
+                                           R.prior_cols, R.prior_dNrr, R.prior_dur}));
+                    admitted = true;
+                } catch (const std::exception&) {
+                    admitted = false;
+                }
             }
-            log->warn("Network: station '{}' addStation rejected ({}); dropping it this epoch",
-                      st.name, ex.what());
-            pdDropEvent(st, R, "dropped");            // name the null column
-            // A station whose epoch holds rows of a non-GPS system and no GPS row has
-            // its receiver clock and inter-system bias collinear, so this rejection is
-            // structural.  Counted here, at the one drop site.
-            if (i < modeled.size() && networkStationNonGpsOnly(modeled[i]))
-                ++ctx.counters.mgnss.nongps_only_pd_drops;
-            present[i] = false;
-            continue;
+            if (!admitted) {
+                // One station's rank-deficient / ill-conditioned local block must not
+                // cost the whole epoch in a large heterogeneous network: the station is
+                // dropped and the rest are kept (the null-space gate still guards the
+                // result).  On the legacy path the pivot is the exception: it carries
+                // the S-basis, so without it the epoch has no datum and is skipped.
+                // Prioritized: the gauge is distributed, so the pivot is dropped too (an
+                // anchor loss is caught by the null-space gate, which withholds, and the
+                // next epoch recovers).
+                if (!phase_datum_prioritized && st.is_pivot) {
+                    log->warn("Network: PIVOT '{}' addStation rejected ({}); skipping epoch",
+                              st.name, ex.what());
+                    ++ctx.counters.pd_drop_pivot_abort;   // the epoch-skipping case
+                    pdDropEvent(st, R, "epoch_sunk");
+                    epoch_ok = false;
+                    break;
+                }
+                log->warn("Network: station '{}' addStation rejected ({}); dropping it this epoch",
+                          st.name, ex.what());
+                pdDropEvent(st, R, "dropped");            // name the null column
+                // A station whose epoch holds rows of a non-GPS system and no GPS row has
+                // its receiver clock and inter-system bias collinear, so this rejection is
+                // structural.  Counted here, at the one drop site.
+                if (i < modeled.size() && networkStationNonGpsOnly(modeled[i]))
+                    ++ctx.counters.mgnss.nongps_only_pd_drops;
+                present[i] = false;
+                continue;
+            }
         }
 
         // Phase-leveling carry: fold this station's diagonal carried prior into its
@@ -397,10 +405,10 @@ void networkSolveStationsTrack(NetworkRun& run, const NetworkEpoch& ep,
     }
     ++cnt.sta_in_solve_epochs;
     cnt.sta_in_solve_ep.push_back(n_in_solve_ep);
-    // The station-entry track (network.station_rowless_column_park, network.station_entry_cold):
+    // The station-entry track (network.station_local_null_pin, network.station_entry_cold):
     // the park episodes and the refusal and return of each station.  A station is refused when it
     // had an assembled block (or its assembly failed) and did not enter the solve.
-    if (ctx.knobs.rowless_park || ctx.knobs.entry_cold) {
+    if (ctx.knobs.local_null_pin || ctx.knobs.entry_cold) {
         std::vector<char> in_solve_of(stations.size(), 0), refused_of(stations.size(), 0);
         std::vector<int> parked_of(stations.size(), 0);
         std::vector<std::string> families_of(stations.size());

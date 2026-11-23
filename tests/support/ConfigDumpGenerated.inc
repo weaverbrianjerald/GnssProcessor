@@ -1317,7 +1317,7 @@ add("getNetworkConfig.emit_pb_hold_trip_trigger", cfg.getNetworkConfig().emit_pb
 add("getNetworkConfig.emit_pb_hold_phase_clock", cfg.getNetworkConfig().emit_pb_hold_phase_clock);
 add("getNetworkConfig.emit_pb_hold_smoothed", cfg.getNetworkConfig().emit_pb_hold_smoothed);
 add("getNetworkConfig.station_prior_before_pd", cfg.getNetworkConfig().station_prior_before_pd);
-add("getNetworkConfig.station_rowless_column_park", cfg.getNetworkConfig().station_rowless_column_park);
+add("getNetworkConfig.station_local_null_pin", cfg.getNetworkConfig().station_local_null_pin);
 add("getNetworkConfig.station_entry_cold", cfg.getNetworkConfig().station_entry_cold);
 add("getNetworkConfig.trace_section_timers", cfg.getNetworkConfig().trace_section_timers);
 add("getNetworkConfig.write_run_manifest", cfg.getNetworkConfig().write_run_manifest);

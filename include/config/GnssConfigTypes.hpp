@@ -3752,22 +3752,20 @@ namespace GnssProcessor {
          */
         bool station_prior_before_pd{ false };
         /**
-         * @brief Keep a station whose only failure is a local column with no row
-         *        (@c network.station_rowless_column_park).
+         * @brief Keep a station whose local block fails only for a direction no row informs
+         *        (@c network.station_local_null_pin).
          *
-         * A local column of a station's block that has no data row and no prior row this
-         * epoch (the receiver phase bias of a signal whose satellites are all unusable,
-         * the code bias of a signal with no code row) makes the block fail the
-         * @c addStation positive-definiteness test, and the whole station is dropped for
-         * the epoch.  On, such a column is parked: it receives a unit prior at its
-         * linearization point on the pre-PD channel, which decouples it exactly from every
-         * other column (it has no off-diagonal term), and it is left out of every harvest,
-         * so no carried value is written from it.  The rest of the station enters.  A
-         * column whose only information is a post-PD carried prior is not parked (the
-         * station is judged as before).  Counted per column family; one event per park
-         * episode under @c network.trace_topology.  Default off: byte-identical.
+         * A station's local block with a null direction (a column with no row; the Galileo
+         * receiver phase bias, ISB and slant ionosphere of a station whose Galileo lines of
+         * sight are all single-frequency) fails the @c addStation positive-definiteness test,
+         * and the whole station is dropped for the epoch.  On, a refused station is retried
+         * once with one row along each null direction at its linearization point; such a
+         * direction is invisible to every row and to the shared border, so no other estimate
+         * moves.  The direction's columns are left out of every harvest, so no carried value
+         * is written from them.  Counted per column family; one event per park episode under
+         * @c network.trace_topology.  Default off: byte-identical.
          */
-        bool station_rowless_column_park{ false };
+        bool station_local_null_pin{ false };
         /**
          * @brief A station's entry after an absence from the solve is a re-coupling with a
          *        cold entry (@c network.station_entry_cold).

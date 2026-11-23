@@ -1,18 +1,18 @@
 #pragma once
 /**
  * @file StationEntry.hpp
- * @brief A station refused for one rowless local column, and the return of a refused station.
+ * @brief A station refused for a null direction of its local block, and the return of a refused station.
  *
  * Two responses, each behind its own key (both default off, identical when off):
  *
- * - **The park** (@c network.station_rowless_column_park).  A local column of a station's block
- *   with no data row and no prior row in the epoch (the receiver phase bias of a signal whose
- *   satellites are all unusable, the code bias of a signal with no code row) fails the whole
- *   station at the @c addStation positive-definiteness test.  The park gives such a column a
- *   unit prior at its linearization point on the pre-PD channel, which decouples it exactly
- *   from every other column (a rowless column has no off-diagonal term), and removes it from
- *   every harvest list of the station, so no carried value is written from it.  The rest of the
- *   station enters.  A column whose only information is a post-PD carried prior is not parked.
+ * - **The null pin** (@c network.station_local_null_pin).  A station's local block that has a
+ *   direction no row informs (a column with no row; the Galileo receiver phase bias, ISB and slant
+ *   ionosphere of a station whose Galileo lines of sight are all single-frequency) fails the
+ *   whole station at the @c addStation positive-definiteness test.  The null pin appends one
+ *   row along each such direction at its linearization point, which changes no other estimate
+ *   (the direction is invisible to the data and to the shared border), retries the station
+ *   once, and removes the direction's columns from every harvest list, so no carried value is
+ *   written from them.
  * - **The cold entry** (@c network.station_entry_cold).  A station that had data and was not
  *   admitted (refused) is decoupled from the network.  While it is out, and at the epoch it
  *   returns, the chain forgets the station's tree memory (its arcs' pin targets, its own parent
@@ -43,7 +43,8 @@ namespace net { struct NetworkEntities; struct StationEntryRecord; }
  *        @c NetworkServiceCounters).  Nothing in the solve reads them.
  */
 struct StationEntryCounters {
-    long long sen_park_station_epochs = 0;   ///< Station-epochs with at least one parked column (counted at the park, before addStation).
+    long long sen_park_station_epochs = 0;   ///< Refused station-epochs that the null pin retried (at least one pin row).
+    long long sen_null_pin_rows = 0;         ///< Pin rows appended, summed over station-epochs.
     long long sen_park_columns = 0;          ///< Columns parked, summed over station-epochs.
     long long sen_park_kept = 0;             ///< Station-epochs with a parked column that then entered the solve.
     long long sen_park_episodes = 0;         ///< Park episodes opened (a station's first parked epoch after one without).
@@ -64,20 +65,25 @@ struct StationEntryCounters {
 };
 
 /**
- * @brief The park: leave every rowless local column of one station out of the epoch.
+ * @brief The null pin: make a refused station's local block positive-definite by pinning its null
+ *        directions, without changing any other estimate.
  *
- * Gate: returns 0 at once unless @c network.station_rowless_column_park.  A column is rowless
- * when its column of @c A_r is zero over every row (data, constraint, coupling and block rows)
- * and it has no entry on either diagonal channel.  Each such column receives a unit prior at
- * its linearization point on the pre-PD channel (tag @c PriorRowlessPark), is removed from the
- * station's harvest lists, and is recorded in @c R.parked_cols with its family.
+ * Gate: returns 0 at once unless @c network.station_local_null_pin.  Called at the drop site
+ * after the station's @c addStation failed.  The block judged is the test's own
+ * (@f$A_r^\top W A_r@f$ plus the pre-PD prior).  A direction @f$v@f$ with @f$N v = 0@f$ has
+ * @f$A_r v = 0@f$, so it is invisible to every row and to the shared border; a row along it at
+ * the linearization point fixes it and moves nothing else.  Null directions are the eigenvectors
+ * whose eigenvalue is below 1e-12 of the largest (the kernel's own count); each gets one row of
+ * weight 1e-6 of the median of the other eigenvalues (tag @c LocalNullPin).  The columns with a weight of at least
+ * 0.05 in a pinned direction are parked: removed from every harvest list (a column with a post-PD
+ * carry keeps its harvest).  A rowless column is the special case @f$v = e_c@f$.
  *
  * @param ctx The run context (knobs, counters).
  * @param st  The station (its parameter slots name the columns).
  * @param R   The station's assembly, modified in place.  // written
- * @return The number of columns parked.
+ * @return The number of pin rows appended (0: no null direction, the station stays refused).
  */
-int networkStationRowlessPark(NetworkRunContext& ctx, const NetStation& st, StationAssembly& R);
+int networkStationNullPin(NetworkRunContext& ctx, const NetStation& st, StationAssembly& R);
 
 /// What the cold entry did to one station.
 struct StationColdDrop {

@@ -78,7 +78,7 @@ namespace GnssProcessor {
         PriorAmbiguityRingHold,   ///< The ring fix's hold row on a decided chord's ambiguity (diagonal; network.ring_fix).
         PriorRxCbDatum,           ///< Zero-mean receiver DCB datum on the post-PD channel (RXCB-DATUM, pre-PD routing off).
         PriorRxCbDatumPrePd,      ///< Zero-mean receiver DCB datum on the pre-PD channel (RXCB-DATUM, network.station_prior_before_pd).
-        PriorRowlessPark,         ///< Unit prior at the linearization point of a local column with no row and no prior, on the pre-PD channel (network.station_rowless_column_park).
+        LocalNullPin,             ///< A row along a null direction of a refused station's local block, at its linearization point, which makes the block positive-definite and changes no other estimate (network.station_local_null_pin).
         // --- Shared rows ---------------------------------------------------------------
         CbIfPin,                  ///< W6 code-bias datum: the per-satellite ionosphere-free pin row.
         CbSatGfPair,              ///< W6 code-bias datum: the per-satellite geometry-free pair row (sat_gf_datum).
