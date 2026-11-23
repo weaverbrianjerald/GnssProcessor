@@ -12,7 +12,7 @@
   with a second jump; with the CODE bias file read, the station's clock then stays 10 to 41 m off its trend and the
   screen's own declarations, with the erase response, keep the station from recovering until 04:08 (the marks of card
   GLM). Stage A0 measures from existing runs only: no build, no gate run.
-- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0).
+- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0); 2026-11-23 (stage A0 results, section 5).
 - **knobs / posture:** none changed. The reference files of 2026-11-22 as run in card BRP: `runs_nom/_rap_brp_f129_c0_6`
   (with the .BIA) and `runs_nom/_rap_brp_f129_c0nb_6` (without); for item 6 the reference runs of 2024 days 129, 130,
   132 and 2026 days 143 to 147.
@@ -25,12 +25,7 @@
   (`gates\broadcast_reference\manager_check\manager_bshm_g22_0245_0255.txt`); standing invariants 1 and 7 of
   `CLAUDE.md`; card GLM (branch `net/gross-los-emit-marks-2026-11-22`).
 
-**Outcome.** Pre-registered; no reading yet. Three steps failed in a row on day 129 at BSHM00ISR: a code observation
-hundreds of metres off entered the solution for three epochs; its line of sight came back with a value that made a
-second jump; and the screen's declarations, which erase the code that would level the station's clock, held the
-station off for 77 minutes, while the product marked its satellites interrupted at every epoch. Stage A0 measures the
-timeline, the rules that waited, the return, the hold, the observation file's flags, the frequency on the reference
-days and the bias file's part. Candidates are described, not built.
+**Outcome.** Stage A0 (section 5, report `gates/station_code_event/REPORT_0.md`): the admission's 1,000 m bound let three drifting rows in (514, 730, 945 m from the station's median) while the screen's station stand-down held every declaration; the re-entry vet that exists default off (`network.adm_revet`, 200 m) would have refused the first. The second jump is G22's L1C level carried from the drifting epochs (-1,522 m) and folded back at the admission's heal (invariant 1). With the bias file the clock then stays about 40 m off for 74 minutes under the screen's own declarations (invariant 7). Only BSHM00ISR does this on the reference days. Candidates described, not built.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -85,3 +80,40 @@ off by a common amount is the station's clock or code-bias block, levelled again
 returning line of sight seeded only from epochs that passed the checks. Each with its place, the event at both edges
 with counters, and the simulator test (a code ramp of about 7 m/s on one satellite at one station for three and a
 half minutes, single band, as a new injector kind beside `code_step` of the GLM branch).
+
+---
+## 5. 2026-11-23, stage A0 results
+
+The full report with its tables: `D:/GnssProcessorSupport/gates/station_code_event/REPORT_0.md`; reads in its `reads/`
+folder; scripts `sce_timeline.py`, `sce_scan.py`, `sce_obs_flags.py` under `runs_nom/_irdu_grades/scripts_s20/`.
+
+1. **Timeline.** G22's C1C alone enters at 02:47:30 (27 m short, absorbed by its free slant ionosphere), is absent at
+   02:48:00, and enters at 02:48:30, 02:49:00, 02:49:30 with post-fit -145, -296, -375 m; the station clock departs
+   -3.2 m in both runs, then -7.5 / -14.0 and -12.4 / -18.2 m (with / without the .BIA). At 02:50:00 the admission
+   withholds band 1; with the file the screen declares G13, G15, G17, G19, G30. At 02:53:00 the clock jumps +36 / +7 m;
+   with the file it stays 37 to 45 m above the run without the file until 04:07:30 (sigma 0.08 to 0.32 m), with 13 to
+   24 code rows of the station at weight and 13 to 25 deweighted.
+2. **Rules that waited.** The admission bound (`MeasurementAdmission.cpp:123`, 1,000 m) acted at the fourth row; the
+   screen (`GrossLos.cpp:251`, two epochs) was held by its station stand-down (`GrossLos.cpp:443`, more than half the
+   lines over, because G22 had already moved the clock); RAIM acts only on a satellite spiked at 3 stations
+   (`Raim.cpp:587`); the prefit census defers a return epoch and is measure only. The re-entry vet `network.adm_revet`
+   (default off, UNVALIDATED, 200 m) would by its rule have refused the row of 02:48:30.
+3. **Return.** At the admission's heal (02:53:00, raw code 2.6 m from the station's median) G22's L1C level harvested
+   from the drifting epochs (-1,522 / -1,515 m) is folded back with variance 0.149 m2; the solve puts it into G22's
+   ionosphere (-154 / -191 m), its code residual (+119 / +184 m) and the clock (+36 / +7 m) before the attribution
+   erases it.
+4. **Hold.** No release test ends it: G15 leaves and G11 re-enters at 04:07:30, the clock's sigma rises to 2.65 m
+   and the clock moves 36 m back; the releases follow at 04:08:00.
+5. **Observation file.** S1C 37 to 42 dB-Hz throughout; L1C flagged loss of lock at 02:48:30 only; L1C minus C1C
+   within 2 m during the drift (the carrier ran with the code). The engine reads the flag, not the signal strength.
+6. **How often.** On 2024 days 129, 130, 132 every gross code row but two and both station episodes are at BSHM00ISR
+   (day 129 02:49 and, in the 24 h run, 13:29; drifts of about 210 m per epoch also at 03:54 on day 129 and 02:35 on
+   day 132); none on day 130; none on 2026 days 143 to 147 (BSHM00ISR not in that network). Outside those drifts and
+   whole-station offsets the network's worst admission distance per epoch is at most 155 m (99th percentile 41 to 64 m).
+7. **Bias file.** With the file every station carries receiver DCB columns (coefficients in the ratio of the slant
+   ionosphere's, `ReceiverBias.cpp:228`) and a looser ISC (0.85 against 0.09 m); the same structure at ordinary
+   stations. The analysis does not settle which part keeps BSHM00ISR's clock off; named pair of 6 h arms, not run:
+   day 129 c0 with the .BIA against the same with the .BIA's `SATELLITE_CLOCK_REFERENCE_OBSERVABLES` lines removed.
+
+Candidates (a) to (d) as in section 4, with places, edges and the simulator injector `code_ramp`, are described in
+the report. Nothing is built, armed or run.
