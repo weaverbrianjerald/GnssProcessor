@@ -275,3 +275,16 @@ identity readings: `gates\exe\x64-Release\gnss_processor_int1122.exe` (sha256[:1
   resets. Written into this card as a defect that outlives the rule.
 - **Tests and gates (order item 6).** Unit tests in files of their own (the gate's causes, ages, gaps and floor; the
   snapshot's `U` record), the full Debug suite, the real-time seam gate, the ledger row of the key in the same commit.
+
+**2026-11-22, the events fixed before any run (an addition of this session).** The code is commit `f8e1384`. The
+satellites were chosen from the existing unedited replay of the same stream and user, `runs_varrate/_rap_vr0_s_U`
+(replay from 262890 s; this card's own control does not exist before the runs): at 3 h (273690 s, plus or minus 5 min)
+E05 (77.6 degrees) is the Galileo reference satellite and E25 (73.7 degrees) is the highest Galileo satellite holding
+integers. E1 as registered takes E25; **E1b is added** with the reference satellite E05, so that the edge "reference
+satellite lost" is driven (the registered text assumed the two would coincide). E2 uses the simulator's own E25
+pattern: the stream carries no E25 record from 264930 to 268320 s, the user sees E25 from 264150 s, loses it at
+264930 s and has it back at 268320 s; E2 removes E25's records over 268320 to 268440 s (4 epochs), so E25 returns on its
+3390 s old record. Streams in `D:\GnssProcessorSupport\gates\user_stale_corrections\streams\` (`scripts\edit_stream.py`):
+`s_e1a_E25.txt` and `s_e1b_E05.txt` (C, B, P, U records of the satellite removed at 273690 to 274290 s, 20 epochs),
+`s_e2_E25ret.txt`, `s_e3_all.txt` (every line of the 20 epochs at 273690 to 274290 s removed, epoch lines included).
+The replays run 6 h like `_rap_vr0_s_U`; epochs after 282630 s (the end of the stream) are not graded.
