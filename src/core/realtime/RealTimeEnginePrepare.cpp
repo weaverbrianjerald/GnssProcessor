@@ -83,8 +83,10 @@ void RealTimeEngine::dropBroadcastGrade(RtEpochContext& ctx) {
  *
  * The solvable floor: when fewer satellites keep their records than the corrections-ready gate's
  * min_satellites, the epoch has no corrected solution.  Every satellite is erased, so the filter
- * predicts only and the model prunes every ambiguity and ionosphere state as for satellites out of
- * view; the first and last epochs of such a run are events, the epochs are counted, and
+ * predicts only.  An empty set makes no state pre-pass in the update, so the seam itself prunes
+ * every ambiguity and ionosphere state as for satellites out of view, with the reference satellites,
+ * the held pairs and the soft-LLI protections (pruneSatelliteStatesForNoSolution_); the first and
+ * last epochs of such a run are events, the epochs are counted, and
  * lastEpochWithoutCorrectedSolution() tells the closed-loop harnesses to mark the epoch.
  */
 void RealTimeEngine::dropUnrecorded(RtEpochContext& ctx) {
@@ -211,9 +213,43 @@ void RealTimeEngine::dropUnrecorded(RtEpochContext& ctx) {
         }
     }
     if (out.empty()) return;
+    // The solvable floor: with every satellite erased the update makes no state pre-pass, so the
+    // floor prunes the satellite states itself (the decoupling edge of the whole set).
+    if (no_corrected_solution_) {
+        std::set<std::string> in_view;
+        for (const auto& st : sats) in_view.insert(st.sat);
+        pruneSatelliteStatesForNoSolution_(epoch_prefix, in_view);
+    }
     modeled_obs.erase(std::remove_if(modeled_obs.begin(), modeled_obs.end(),
                                      [&](const PppObservation& o) { return out.count(o.satellite) > 0; }),
                       modeled_obs.end());
+}
+
+void RealTimeEngine::pruneSatelliteStatesForNoSolution_(const std::string& epoch_prefix,
+                                                        const std::set<std::string>& in_view) {
+    const std::size_t n_amb  = state_manager_->getAmbiguities().size();
+    const std::size_t n_iono = state_manager_->getIonosphereStates().size();
+    if (n_amb == 0 && n_iono == 0) return;   // torn down at an earlier epoch of this spell
+    state_manager_->pruneAmbiguitiesExcept({});
+    state_manager_->pruneIonosphereStatesExcept({});
+    // A protection or a bridge snapshot that outlived its ambiguity would restore a pre-gap value
+    // onto the state reborn at the return.
+    if (soft_lli_) soft_lli_->reset();
+    meas_model_->setProtectedAmbiguityKeys({});
+    // The reference satellites' states are gone with the rest; the return elects new ones.
+    if (config_.enableBetweenSatelliteSd()) meas_model_->getPivotManager().dropAllPivots(*state_manager_);
+    std::size_t n_pairs = 0;
+    if (ambiguity_resolver_) {
+        std::set<std::string> sats = in_view;
+        const auto& held = ambiguity_resolver_->heldSatellites();
+        sats.insert(held.begin(), held.end());
+        n_pairs = static_cast<std::size_t>(ambiguity_resolver_->forgetHeldPairs(sats));
+    }
+    log_manager_.getLogger("rt_engine")->info(
+        "{}Unrecorded-satellite rule: no corrected solution: {} ambiguity and {} ionosphere state(s) "
+        "pruned, {} held pair(s) forgotten, reference satellites dropped; the readmits at the "
+        "stream's return seed them afresh",
+        epoch_prefix, n_amb, n_iono, n_pairs);
 }
 
 void RealTimeEngine::logUnrecordedGateSummary(const char* tag) const {

@@ -1153,6 +1153,22 @@ private:
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
     void dropBroadcastGrade(RtEpochContext& ctx); ///< Drop broadcast-grade sats from the precise solution.
     void dropUnrecorded(RtEpochContext& ctx);     ///< Leave out sats without their stream records (processing.ssr_drop_unrecorded, ssr_drop_unrecorded_phase_bias).
+    /**
+     * @brief The solvable floor's teardown: every ambiguity and ionosphere state is pruned, as the
+     *        model prunes a satellite out of view, with the bookkeeping that names them (the
+     *        reference satellites, the resolver's held pairs, the soft-LLI protections).
+     *
+     * Called by dropUnrecorded at each epoch without a corrected solution.  With every satellite
+     * erased the measurement update returns before the model's state pre-pass, so nothing else
+     * prunes; the readmits at the stream's return then seed the states afresh, which is what lets
+     * them set the discontinuity memories to the returned records.  A no-op once the states are
+     * gone (the later epochs of the same spell).
+     * @param epoch_prefix Log prefix of the epoch.
+     * @param in_view      The satellites of the epoch's modelled set (their held pairs are forgotten
+     *                     with those of the resolver's held satellites).
+     */
+    void pruneSatelliteStatesForNoSolution_(const std::string& epoch_prefix,
+                                            const std::set<std::string>& in_view);
     void seedClockFromWls(RtEpochContext& ctx);   ///< WLS clock seed; runs only with a receiver clock state (not BSSD; see regaugeBssd).
     void regaugeBssd(RtEpochContext& ctx);        ///< BSSD code/phase re-gauge; BSSD only, so mutually exclusive with the above.
 
