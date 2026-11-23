@@ -208,3 +208,10 @@ From the drain on, nothing drops a landed mark: solution prep's drain (`SolPrep.
   the onset and the epoch after it, at the cold release and the epoch after it, and at any cold refloat and the epoch
   after it; no other gross-LOS mark of those satellites. The 1 mm bound on the emitted values is read from the epoch
   after the onset's response epoch (onset + 2) to the end of the window.
+
+## 2026-11-23: the cause of the day-129 declarations is card SCE's
+
+The day-129 episode at BSHM00ISR is traced on card SCE (`docs/cards/raim-qc/SCE-STATION-CODE-EVENT.md`, branch
+`qc/station-code-event-2026-11-23`): one satellite's code running free (G22, up to 1.3 km short from 02:47:30 to
+02:50:30), admitted under a bound of 1,000 m, folded back at the admission's heal, and a station whose declarations
+nothing ends. This card's fix of the marks stands as it is; the cause of the declarations is that card's.
