@@ -12,7 +12,7 @@
   with a second jump; with the CODE bias file read, the station's clock then stays 10 to 41 m off its trend and the
   screen's own declarations, with the erase response, keep the station from recovering until 04:08 (the marks of card
   GLM). Stage A0 measures from existing runs only: no build, no gate run.
-- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0); 2026-11-23 (stage A0 results, section 5).
+- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0); 2026-11-23 (stage A0 results, section 5); 2026-11-23 (stage A1 registered, section 6; day-129 results of arms V and B, section 7: S1 failed on reading (e) by one row).
 - **knobs / posture:** none changed. The reference files of 2026-11-22 as run in card BRP: `runs_nom/_rap_brp_f129_c0_6`
   (with the .BIA) and `runs_nom/_rap_brp_f129_c0nb_6` (without); for item 6 the reference runs of 2024 days 129, 130,
   132 and 2026 days 143 to 147.
@@ -166,3 +166,25 @@ Readings (as ordered; one sharpened, marked):
 - **Outcome rule.** An arm that meets S1 to S3 is a candidate for the reference files, decided by the managing
   session under the arming rule. The return (the level folded back at the heal) and the stand-down that nothing ends
   stay open whatever S1 shows (candidates (c) and (d), with the `code_ramp` event, for a later build).
+
+---
+## 7. 2026-11-23, stage A1 results: day 129, arms V and B
+
+Report: `D:\GnssProcessorSupport\gates\station_code_event\REPORT_1.md`; reads `gates/station_code_event/reads/`
+(`sce_s1_f129_v.txt`, `sce_s1_f129_b.txt`: `scripts_s20/sce_s1_grade.py`; `sce_row_g22_0357.txt`:
+`scripts_s20/sce_row_check.py`). Engine `gnss_processor_sce_int1122.exe` (sha256[:16] a0fadbb1564612b9); control
+`runs_irm/_rap_a22h_f129_6`. The smoke and both arms exit 0, 720 of 720 epochs emitted.
+
+- **Met by both arms:** (a) G22's three rows of 02:48:30 to 02:49:30 at BSHM00ISR are not in the solve (V
+  `adm_reject_reentry`, B `adm_onset`, G22 02:48:30 at -514 m); (b) the station clock within 4.0 m of its trend (bar 6
+  m); (c) no stand-down, one line declared apart from G22 (G14); (d) 33 marks in hour 4 against the control's 790; (f) the
+  built-in user's hours 4 and 5 at 9 and 7 mm (control 33 and 38 mm), hours 2, 3, 6 within +0.5 mm; (g) held share from
+  hour 3 within -0.1 point or better; (h).
+- **Failed by both arms: (e).** Of the three refusals the arms make and the control does not, one (G22 at 03:57:30,
+  refused on its return at 347 m) has a control post-fit residual of +0.5 m, against the bar of none under 50 m. At that
+  epoch the control's station clock stands +35.8 m from its own trend with 15 of the station's code rows deweighted, and
+  G22's code row of 03:58:30 has a control residual of +116.1 m; the arm's clock is within 1.3 m of its trend. The
+  control's residual therefore does not show the row to be good, but the bar stands as registered: (e) fails.
+- **Outcome:** neither arm meets S1 as registered. V and B differ in their products (one held epoch after each refusal)
+  and in nothing graded. S2 and S3 are not run (the order runs them for an arm that meets S1); S4 (arm K, the bias file
+  without its five `SATELLITE_CLOCK_REFERENCE_OBSERVABLES` lines, G R E C J; the order named four) is made and not run.
