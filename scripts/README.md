@@ -40,6 +40,7 @@ The wrapper, the unit-suite runners, the docs gate.
 | `vs2026_build.ps1` | compile check (Debug is for compile checks and gnss_tests ONLY -- never data runs) | 29 |
 | `cpp_lex.py` | The C++ comment and string-literal lexer shared by the source-reading scripts (`strip_comments`, `string_literals`). Moved here from `rt_seam_verify.py` when that gate was retired. | 3 |
 | `wt_build.ps1` | THE ONE DIFFERENCE from scripts\vs2026_build.ps1: root from $PSScriptRoot. | 1 |
+| `unit_shards.py` | Run the Debug unit suite (gnss_tests.exe) as N GoogleTest shards at once (default 6, each with a temp directory of its own, all in the working directory of an unsharded run) and merge the XML reports into one summary: cases, suites, passed, skipped, failed, the failing names, the wall time; exit nonzero on any failure, crash or missing case. `run --shards 1` is the unsharded run; `compare A B` compares two runs case by case; `selftest`. Added 2026-11-23. | 0 |
 
 ## Documentation tree
 
