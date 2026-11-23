@@ -215,3 +215,17 @@ The day-129 episode at BSHM00ISR is traced on card SCE (`docs/cards/raim-qc/SCE-
 `qc/station-code-event-2026-11-23`): one satellite's code running free (G22, up to 1.3 km short from 02:47:30 to
 02:50:30), admitted under a bound of 1,000 m, folded back at the admission's heal, and a station whose declarations
 nothing ends. This card's fix of the marks stands as it is; the cause of the declarations is that card's.
+
+## 2026-11-23: the first simulator runs of A1 are void (arm defect); re-run
+
+The simulator arms of the first A1 runs (`runs_glm/_rap_glm1_s_*`: G3 `_rap_glm1_s_{on,off}_6`, G4
+`_rap_glm1_s_{ev,null}_4`, the G1 simulator pair and the smoke) were plain copies of `golden_sim_refound.json`, which
+carries no `network.start_offset_hours` and 20 threads; each starts at 00:00:30 inside the fixture's start artifact
+(first network epoch 259230, not 261060). The ring fix's truth audit of `_rap_glm1_s_off_6` reads 80,619 right and
+191,172 wrong held link-epochs, 1,083 wrong decisions (the reference `_rap_a22h_s_6`: 406,237 right, 0 wrong). Void:
+G3's truth audit and every G4 reading from those runs. G3's identity of key on against key off (37 of 40 files
+identical, 3 in wall-clock columns only) is an identity of two runs of one configuration and stands as a check of the
+code, but the reading is taken again. Re-run at gate priority 4 with the offset and 4 threads: `_rap_glm1o_s_{on,off}_6`
+(G3) and `_rap_glm1o_s_{ev,null}_4` (G4); the G1 arms are remade the same way before they run. The day-129 runs carry
+20 threads (G2: `_rap_glm1_f_{on,off}_6`); the comparison is of two runs of one configuration, and the user replays run
+at 4 threads. Every arm now passes `gates/variable_rate/scripts/arm_guard.py`.
