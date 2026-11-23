@@ -292,3 +292,16 @@ any of its discontinuity counters or of a phase bias's integer counter at that e
 
 For the record: the G2 arms (`_rap_glm1_f_{on,off}_6`) ran at 20 threads, as did the A0.3 replays; outputs are of one
 configuration per comparison and unaffected; every arm from here on runs at 4 threads (`arm_guard.py`).
+
+## 2026-11-23: G4b read; STPM's hour 5
+
+**G4b** (registered above, `gates/gross_los_marks/scripts/g4b_steps.py`, `out/g4b.txt`): 268320 to 270030, 3,247
+satellite-epochs in each leg; steps of the phase clock over 5 mm between satellites with no mark: event leg 52, null
+leg 49 (marked steps 45 and 46). Bar (no more than the null leg): **misses by 3.** The legs share 48 of their unmarked
+steps; only in the event leg: G08 at 268380 (5.1 mm), G12 at 268920, 268980 and 269460 (5.2, 5.7, 6.2 mm); only in the
+null leg: G06 at 268740 (5.0 mm). Every one of the five is within 1.2 mm of the 5 mm line; G12's are at the ring-fix
+decisions the two legs take at different epochs (G4's note). Of the six stepped satellites, unmarked steps 13 against 10.
+
+**STPM, hour 5** (at a glance from the replays, not traced): with the key on STPM holds nothing on any satellite from
+03:54 to about 04:45 (5 to 7 held with the key off); among the marked satellites the difference is G12 (held samples in
+hour 5: 88 with the key off, 18 with it on; G12 reset at every mark from 03:49 with the key off, 4 times with it on).
