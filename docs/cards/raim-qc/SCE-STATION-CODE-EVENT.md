@@ -12,7 +12,7 @@
   with a second jump; with the CODE bias file read, the station's clock then stays 10 to 41 m off its trend and the
   screen's own declarations, with the erase response, keep the station from recovering until 04:08 (the marks of card
   GLM). Stage A0 measures from existing runs only: no build, no gate run.
-- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0); 2026-11-23 (stage A0 results, section 5); 2026-11-23 (stage A1 registered, section 6; day-129 results of arms V and B, section 7: S1 failed on reading (e) by one row).
+- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0); 2026-11-23 (stage A0 results, section 5); 2026-11-23 (stage A1 registered, section 6; day-129 results of arms V and B, section 7: S1 failed on reading (e) by one row); 2026-11-23 (stage A2 registered, section 8; results, section 9: S1 to S3 met except (e), (e2) met).
 - **knobs / posture:** none changed. The reference files of 2026-11-22 as run in card BRP: `runs_nom/_rap_brp_f129_c0_6`
   (with the .BIA) and `runs_nom/_rap_brp_f129_c0nb_6` (without); for item 6 the reference runs of 2024 days 129, 130,
   132 and 2026 days 143 to 147.
@@ -222,3 +222,22 @@ C1C alone, drifts about 200 m low by 03:56:30, and the row of 03:57:30 comes bac
 - **Readings:** S1 to S3 as registered in section 6 with (e2) beside (e); on day 129 against the new control the numbers of
   (d) and (f) are read against that control's own values. The day-129 pair on main's reference stays as section 7 records
   it. S4 (the bias-file pair) is no longer needed.
+
+---
+## 9. 2026-11-23, stage A2 results: arms B and V on the reference without the bias file
+
+Report: `D:\GnssProcessorSupport\gates\station_code_event\REPORT_2.md`; reads `gates/station_code_event/reads/sce_a2_*.txt`
+(`scripts_s20/sce_a2_read.sh`). Engine `gnss_processor_sce_nbf1123.exe` (sha256[:16] 4799852583448865); controls
+`runs_irm/_rap_nbf_h_*_6`. The smoke and all six arms exit 0, 720 of 720 epochs emitted.
+
+- **S1 (day 129), B and V alike:** (a), (b) 4.0 m, (c), (d) 33 marks in hour 4 (control 191), (f) the built-in user's
+  hours 4 to 6 at 12, 8 and 7 mm against 14, 11 and 10 mm, (g), (h) met; (e) fails (2 refused rows, G13 03:54:30 and G22
+  03:57:30, with control residuals of 0.5 and 0.8 m); (e2) met (all three refusals bad by their own raw data: -512.6,
+  +307.5, +384.3 m).
+- **S2 (day 132), B and V alike:** (a) met (G22 from 02:35:30 not in the solve); (e) fails (2 refused rows with control
+  residuals of 0.0 m); (e2) met: G22 02:35:30 bad at -646.5 m, G22 03:53:00 (631 m) and, in V, G22 04:28:00 (13,412 m) not
+  judged for want of 6 clean epochs within 10 minutes; (f) within +0.1 mm, (g), (h) met.
+- **S3 (day 130, the simulator), B:** no row refused; products identical and every trace identical except the wall-clock
+  timing columns; the simulator's truth audit 406,385 right, 0 wrong in both.
+- **Outcome:** both arms meet S1 to S3 except (e), which fails as registered on both observed days; (e2) passes. The
+  decision on the reference files is the managing session's.
