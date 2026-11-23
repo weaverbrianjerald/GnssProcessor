@@ -5,14 +5,14 @@
 - **id:** USC
 - **topic:** user-ar
 - **status:** open
-- **summary:** Pre-registered 2026-11-22 after step 0 (measure only, existing traces). A satellite whose clock record the stream does not carry at the epoch (absent, or older than 30 s) stays in the user's solution with the a priori clock and no bias; a refused phase or code bias leaves its row in with a bias of zero. Both observed cases at ASCG00SHN on DOY 129 are this path: E25 back on a 57 min old record (1.59 m) and E24 at its first sighting without a record (55.23 m, sigma 0.69 m), each at an epoch where the filter's complete reset fired. A default-off rule that leaves such a satellite out already exists (card IRDU, ledger UNVALIDATED, never armed).
-- **dates:** 2026-11-22 (step 0 measured and the card filed; the build step waits for the author's word).
-- **knobs / posture:** none new at filing. Existing, default off: `network.closed_loop.drop_unrecorded` and `network.closed_loop.drop_unrecorded_phase_bias` (consumer `processing.ssr_drop_unrecorded`, `processing.ssr_drop_unrecorded_phase_bias`). Related, armed in the reference files since 2026-11-22: `network.closed_loop.code_bias_gap_response` = full (card CBG).
-- **code:** `src/core/realtime/RealTimeEnginePrepare.cpp` (`dropUnrecorded`), `include/realtime/UnrecordedSatGate.hpp`, `src/core/realtime/RealTimeEngineSsrBreaks.cpp` (`resetOnPhaseBiasDisc`, `reinflateOnCodeBiasDisc`), `src/core/corrections/GnssCorrections.cpp` (the clock overlay), `src/core/measurement/ObservationEquation.cpp` (`addSsrBias`), `src/core/filter/PivotManager.cpp` (the reference election), `src/core/filter/KalmanPostFitQc.cpp` and `KalmanOutlierResponse.cpp` (the complete reset).
-- **run dirs:** none of its own at filing. Read: `D:\GnssProcessorSupport\runs_irm\_rap_n20_*`, `_rap_n20c_*`; `D:\GnssProcessorSupport\runs_varrate\_rap_vr0*`; `D:\GnssProcessorSupport\runs_nom\_rap_agu3_d10{x,f}_*`, `_rap_agu3_roof10{x,f}`, `_rap_agu_final24_n14*`. Scripts and outputs: `D:\GnssProcessorSupport\gates\user_stale_corrections\` (`scripts\count_unrecorded.py`, `out\`, `REPORT_0.md`).
+- **summary:** Pre-registered 2026-11-22 after step 0 (measure only). A satellite whose stream record is absent or older than 30 s stayed in the user's solution with the a priori clock and no bias; both observed cases at ASCG00SHN on DOY 129 (E25 back on a 57 min old record, 1.59 m; E24 at its first sighting, 55.23 m with a sigma of 0.69 m) are this path. Built 2026-11-22 to 23 on branch `user/stale-corrections-2026-11-22` (`f8e1384`, floor repair `0cf7be8`): the existing default-off rule completed at both edges, with a solvable floor; readings in section 8. Not merged; arming is the managing session's decision.
+- **dates:** 2026-11-22 (step 0 measured, the card filed, the build and its readings registered); 2026-11-23 (build results, the floor repair).
+- **knobs / posture:** no new key. The rule is behind the existing default-off keys `network.closed_loop.drop_unrecorded` and `network.closed_loop.drop_unrecorded_phase_bias` (consumer `processing.ssr_drop_unrecorded`, `processing.ssr_drop_unrecorded_phase_bias`; ledger UNVALIDATED); every key-on arm armed the second, which includes the clock rule. Related, armed in the reference files since 2026-11-22: `network.closed_loop.code_bias_gap_response` = full (card CBG).
+- **code:** `src/core/realtime/RealTimeEnginePrepare.cpp` (`dropUnrecorded`, `pruneSatelliteStatesForNoSolution_`), `include/realtime/UnrecordedSatGate.hpp` and `src/core/realtime/UnrecordedSatGate.cpp` (causes, ages, gaps, the floor), `src/core/realtime/RtStateSnapshot.cpp` (record `U`), `tests/test_unrecorded_sat_gate_edges.cpp`, `tests/test_rt_state_snapshot_unrecorded.cpp`; read: `src/core/realtime/RealTimeEngineSsrBreaks.cpp`, `src/core/corrections/GnssCorrections.cpp` (the clock overlay), `src/core/measurement/ObservationEquation.cpp` (`addSsrBias`), `src/core/filter/PivotManager.cpp`, `src/core/filter/KalmanOutlierResponse.cpp` (the complete reset).
+- **run dirs:** `D:\GnssProcessorSupport\runs_ustale\_rap_us_*` (engine ustale1) and `_rap_us2_*` (ustale2); edited streams in `D:\GnssProcessorSupport\gates\user_stale_corrections\streams\`. Read: `D:\GnssProcessorSupport\runs_irm\_rap_n20_*`, `_rap_n20c_*`; `D:\GnssProcessorSupport\runs_varrate\_rap_vr0*`; `D:\GnssProcessorSupport\runs_nom\_rap_agu3_d10{x,f}_*`, `_rap_agu3_roof10{x,f}`, `_rap_agu_final24_n14*`. Scripts, gradings and reports: `D:\GnssProcessorSupport\gates\user_stale_corrections\` (`scripts\`, `out\`, `tickets\`, `REPORT_0.md`, `REPORT_1.md`).
 - **source:** the managing session's order of 2026-11-22 (the two user weaknesses found by card VRE step 0b: `docs/cards/perf/VRE-VARIABLE-RATE-ESTIMATION.md` on the unmerged branch `net/variable-rate-2026-11-21`, sections dated 2026-11-22); card IRDU sections 12.10 to 15 ([part 4](../../record/refound/IRDU_user_integers_on_the_chain_2026-11-14_part4.md), [part 6](../../record/refound/IRDU_user_integers_on_the_chain_2026-11-14_part6.md)); card [CBG](CBG-USER-CODE-BIAS-GAP.md).
 
-**Outcome.** Step 0, existing traces only. Both observed cases are one path: a satellite used with no correction at an epoch whose residuals trip the filter's complete reset (all 9 resets in 295 held-product replays). In the reference streams the path is rare and harmless: one 7 min event in 51 receiver-days of 6 h, five E18 events in 210 poster day-long users, no reset. It is reached when a record is late or the stream stops (5.3 m past the end of the simulator stream). The design arms and completes the existing default-off rule of card IRDU; one simulator event is registered.
+**Outcome.** The rule, default off, leaves a satellite without its record out of the user's solution and readmits it with fresh states; below 5 kept satellites the epoch has no corrected solution. It removes both observed failures (ASCG: 1.59 m to 0.04 m, 55.2 m to 0.59 m, no complete reset), and on the withheld simulator stream the 5.3 m error with a 0.91 m sigma becomes an honest float solution. Where nothing happens it changes only the two G01 receiver-days, by at most 6 mm; keys off it is identical. The floor's state pruning was repaired after the first build. Arming waits on the managing session.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -323,3 +323,121 @@ of the code the branch touches plus the contract suites that guard its seams, wi
 `UnrecordedSatGate*:RtStateSnapshot*:ConsumerSatTraceSchemaTest*:ConsumerTraceSchema*:ConsumerDiscCarryTest*:ArFixQuality*:CodeBiasGapTest*:RealtimeDefectTest*:RealtimeReactionRecords*:RealtimeReactionGeneration*:RealtimeReactionLevelEphemeris*:RealtimeEphStalenessTest*:RealtimeSsrFreshnessTest*:RealtimeSsrIodeGateTest*:SsrClockStaleHoldTest*:SsrConsumerSeamTest*:SsrIngestFilterTest*:InnovationScreen*:ConfigAskedVsInEffect*:ConfigMemberDump*:NetworkRunTracesOpenSet*:NetworkEpochContract*`,
 the real-time seam gate and the ledger row. The full Debug suite runs once in the integration round on the merged
 tree.
+
+## 8. 2026-11-23: build results (engines ustale1 and ustale2)
+
+**Engines and runs.** ustale1: `D:\GnssProcessorSupport\gates\user_stale_corrections\exe\x64-Release\gnss_processor_ustale1.exe`,
+sha256[:16] aaeff9f77eb8f95f, code `f8e1384`. ustale2 (the floor repair below): `gnss_processor_ustale2.exe` in the same
+folder, sha256[:16] 33eec91eae27ec75, code `0cf7be8`. Base: `gnss_processor_int1122.exe` (a0fadbb1564612b9). Runs:
+`D:\GnssProcessorSupport\runs_ustale\_rap_us_*` (148 arms on ustale1, the 2 h network runs on both engines, every exit
+0) and `_rap_us2_*` (4 arms on ustale2, every exit 0). Gradings: `gates\user_stale_corrections\out\grade_*.txt`;
+scripts `grade_build.py`, `r1_holds.py`, `r1_e3_fix.py`, `masked_net_compare.py`, `masked_net_compare2.py`. Every
+key-on arm arms `network.closed_loop.drop_unrecorded_phase_bias` (which includes the clock rule); the clock-only key
+`network.closed_loop.drop_unrecorded` was not run alone.
+
+**Tests and gates (order item 6).** Filtered unit suites (the filter of section 7): 245 tests in 33 suites, 199
+passed, 46 skipped, 0 failed, on `f8e1384` (`tickets\t1_unit.txt`) and again on `0cf7be8` (`tickets\t3_unit.txt`).
+The skips are the suites' own skip sites (reaction records, generation, level and ephemeris, configuration asked
+against in effect, network); the two new suites have none. Real-time seam gate, four arms (cl, sbf, sbf_bssd,
+sbf_te): PASS for ustale1 and for ustale2 against base1122 (`tickets\t2_seam_compare.txt`, `t3_seam_compare.txt`).
+The gate ran from a scratch root (`gates\user_stale_corrections\rtseam_root`) whose `sbf_replay.json` names
+`files.internal_data_root` "C:/GnssProcessor/data": "./data" resolves under the executable's compiled project root,
+and neither build worktree holds a date folder (both engines failed the three SBF arms at the first try, 04:10). The
+full Debug suite runs in the integration round.
+
+**R1, the simulator events.** Control `_rap_us_s_U_off`. Every arm also ran with the code-bias gap response `full`;
+its traces are identical to the arm without it in all 14 pairs, so no reading below changes with it.
+
+| | E1a (E25 lost) | E1b (E05, the reference) | E2 (E25 back on a 3,390 s record) | E3 (whole stream) |
+|---|---|---|---|---|
+| Drop | 273720, record lost, last record 60 s | 273720, record lost, "it was the reference satellite" | 268320, back on a stale record | 273720, every satellite; floor edge "no corrected solution" |
+| Readmit | 274290, gap 570 s | 274290, gap 570 s | 268440, gap 120 s | 274290, "corrected solutions resume" (13 kept) |
+| Ambiguity variance at readmit, L1C / L5Q (m^2) | 0.032 / 0.101 (control 0.00034 / 0.0010) | 0.031 / 0.101 (control: reference, 0) | 0.058 / 0.186 (control 0.038 / 0.121) | ustale1: 1.6e-08 (not pruned); ustale2: 0.41 to 9.12 |
+| Complete resets, key on / key off | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Epochs above 5 cm and 3 sigma (window and 30 min), key on / key off | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 79 (key off max 5.316 m, sigma 0.909 m) |
+| 3D error minus control from 10 min after the return | max 10.3 mm, median 1.2 (key off 8.1 mm) | max 2.5 mm (key off 11.9) | max 7.9 mm, median 0.1 (key off 0.1) | ustale1 1.2 mm; ustale2 max 204 mm, median 18.6 |
+| Wrong held integers (against the control, same epochs) | 0 of 5,960 | 0 of 5,438 | 0 of 7,478 | 0 of 5,678 (ustale1), 0 of 2,928 (ustale2) |
+
+The only rows of the satellite inside the edited window are at 273690 s, where the last record (273660 s) is 30 s old
+and still valid. Holds of the other satellites: E1a and E2 lose none beyond the control at the event. In E1b, E25
+becomes the Galileo reference at the drop (its rows at variance 0 are reference rows, not lost holds) and E24 is
+released at 274380 s, 90 s after E05's readmit (held again by 275400 s; E05 itself held again by 274500 s). E3 loses
+all 20 held rows by design; on ustale2 at least 18 are held again 63 min after the return. The unedited stream with
+the key on is identical to the control in both traces to the stream's end (282630 s), on ustale1 and on ustale2;
+after it every record has ended and the floor fires (not graded, section 7).
+
+Bars as registered and not met:
+
+1. E1a, within 5 mm of the control from 10 min after the return: 2 epochs at 276390 to 276420 s (10.3 mm), where the
+   key-off arm differs by 8.1 mm at the same epochs.
+2. E2, the same bar: 16 epochs at 274260 to 274770 s (7.9 mm), where the run releases two held pairs (E24, E18; trace
+   `held_left` 2) that the control keeps, held again by 274800 s. The resolver's own logs are off in these arms, so
+   the test that released them is not recorded.
+3. E3 on ustale2, every other hold kept and within 5 mm: not met by construction, since the floor prunes every state
+   and the user converges afresh (largest error 0.885 m at 274320 s, with a sigma of 1.438 m).
+4. "0 wrong held integers against the fixture's truth" is read against the control's integers at the same epochs. A
+   direct reading against `SZZ000SIM/truth_ambiguities.csv` is not usable: in the control itself 33 of 36
+   satellite-signals take several rounded offsets over the window (the stream's integer frame moves).
+
+**Defect found and repaired: the floor did not prune (ustale1).** Below the floor every satellite is erased from the
+epoch's set, and an empty set makes no state pre-pass in the measurement update (`computeMeasurementUpdate` returns
+before `ensureRequiredStates`), so nothing pruned. On E3 every ambiguity kept its held variance through the 10 min
+(1.52e-08 m^2 before, 1.58e-08 at the return), the position came back to a 2.3 cm sigma at the first epoch, and the
+readmits logged "seeded afresh" while setting the discontinuity memories to the returned records, which would absorb a
+phase-bias frame change made during the outage (standing invariant 1); the slip detectors do not run on the erased set
+either. Commit `0cf7be8` makes the floor tear the satellite states down at its first epoch, as the model prunes a
+satellite out of view: every ambiguity and ionosphere state, the soft-LLI bridge and protections, the reference
+satellites and the resolver's held pairs (`pruneSatelliteStatesForNoSolution_`, one log line with the counts; on E3,
+26 ambiguity and 13 ionosphere states and 12 held pairs). Only E3 and the epochs after the simulator stream's end reach
+the floor; no field arm does (searched: the rule's floor line in every key-on arm of R2, R4, R5 and the network runs),
+so every other reading of ustale1 stands for ustale2. The quick recovery on ustale1 (1.2 mm from the control) rested
+on the unpruned states. Keeping states safely across a spell would need the slip detectors on the raw set during the
+spell and the discontinuity reactions left armed at the return: a design question, not built.
+
+**R2, no harm where nothing happens.** The 51 receiver-days of `runs_irm/_rap_n20_<doy>_<site>`, key on against key
+off: only `132_arht` and `132_dav1` differ, at the G01 event (drop at 529980 s, record lost, last record 60 s, at ARHT
+the reference satellite; readmit at 530400 s), with position changes at 39 and 98 epochs, at most 6.1 and 3.9 mm. The
+built-in users of the two reference files (2 h network runs, field and sim): every file identical to the key-off run
+once wall-clock content is masked (timing columns, real-time backlog against the wall clock, paths, build date,
+configuration hash); products and the user's traces are byte-identical. The key-on run adds the rule's two run-end
+lines (0 drops, 0 epochs without a corrected solution).
+
+**R3, identity off.** The branch engine with the keys off against the base engine: the same 2 h network runs are
+identical under the same mask (products and user traces byte-identical; `rt_engine.log` identical once the backlog
+against the wall clock is masked), and the seam gate passes (above).
+
+**R4, the two field cases** (`runs_irm/_rap_n20_129_ascg` as the unheld control). Key on, with and without `full`
+(identical): no complete reset (key off: at 268320 and 261930 s). E25 is dropped at 268320 s (back on a stale record,
+last clock record 3,390 s) and readmitted at 268500 s; E24 is dropped at 261930 s (first sighting, no record) and
+readmitted at 262200 s. Peak error near the event: 1.589 m to 0.037 m (H300), 55.225 m to 0.589 m (P300, hour 1).
+Epochs worse than the unheld control by more than 5 cm from 10 min after the return: 7 (H300) and 6 (P300), all at
+271500 to 271680 s, where every held-product arm, key off included, sits at 9 to 13 cm against the unheld control's
+2 to 7 cm (a feature of the 300 s held product); key off has 111 and 237 such epochs. The 5 cm bar is not met as
+written; the excursion is the held product's own.
+
+**R5, the folded IRDU 15.1 runs.** O1: at HARB00ZAF, DAV100ATA and SCRZ00BOL (`runs_irm/_rap_n20c_129_*` replayed,
+undifferenced frozen-lineage users), the rule's satellite-epochs left out for a missing phase-bias record equal the
+class-B satellite-epochs of the key-off run exactly: 1,369, 1,446 and 1,715 (class A 0 at each). O2, the minute from
+which the 3D error stays below 10 cm, key off to key on: 31.0 to 15.5 (HARB), 240.5 to 115.0 (DAV1), 252.5 and 252.5
+(SCRZ); 3D median, hours 2 to 6: 42.5 to 18.8 mm, 119.8 to 31.7 mm, 50.4 to 51.4 mm. Satellites still out at the end
+(the stream carries no L1C/L5Q phase bias for them): E34; E02, E25, E34; E10, E11, E15, E30, E34, E36.
+
+**R6, the complete reset traced (order item 5).** The RT state snapshot was not written in the three short replays:
+at the first epoch the writer refused the layout ("dynamic index 4 ('E10') does not tile the dynamic block [19..66)").
+The user carries one phase-colour state per satellite (it reads `network.phase_colour_state`, true in the
+golden-based configuration), a family without a snapshot tag (`include/filter/StateFamily.hpp`), so no user on the
+reference posture can write a state snapshot, the rule's record `U` included; the check and the table predate this
+branch. Read from the code instead (`KalmanFilter::resetFilterCovariance`): the reset zeroes the whole covariance and
+restores only position, clock, troposphere, gradients, system time offsets, ionosphere (and rate), ambiguities and
+IMU states. Every other family keeps a variance of exactly zero (on this user the phase-colour states; where carried,
+the receiver code bias, satellite code and phase biases, receiver phase bias, satellite clock and receiver-satellite
+code bias), every cross-covariance is zero, and the reference satellites' ambiguity and ionosphere rows stay at zero by
+design (seen in the trace at 261930 s: G05 L1C/L2W, E10 L1X/L5X). Their values are not read (no snapshot). Named
+follow-ups: the reset's unrestored families, and the user's phase-colour states that block its snapshot.
+
+**Grader corrections of this section.** `grade_build.py` read `exitcode.txt` whole (two lines), and its held-integer
+reading took one median per (epoch, signal), mixing GPS and Galileo L1C rows, so a change of the Galileo reference
+read as half the rows wrong (E1b: 2,997 of 5,992); `r1_holds.py` reads per epoch and per constellation against the
+control's integers at the same epoch. The grader's reset test (a sigma above 50 m after one below 10 m) flags the
+first floor epoch of E3, where the filter predicts only and the position sigma grows to 94.9 m and then 414 m while
+the position is unchanged; it is not a complete reset.
