@@ -11,7 +11,7 @@
 - **code:** planned, branch `net/gross-los-emit-marks-2026-11-22` from main 33c5fef: `src/core/network/qc/GrossLos.cpp` (the mark decision), the injector kind `code_step` (`network/carry/Inject`), tests in a file of their own.
 - **source:** the managing session's order 5 (`D:/GnssProcessorSupport/gates/variable_rate/manager_ORDER_5.md`) and its check `manager_check/manager_retro_marks.py`; card VRE step 1 (reading R3, `REPORT_4.md`); the screen's record [RF-3](../record/refound/RF-3_code_row_qc_2026-09-22.md) (B3, section 5.3). Working folder `D:/GnssProcessorSupport/gates/gross_los_marks/` (scripts `glm_common.py`, `a0_marks.py`, `a0_pool.py`, `a0_edit.py`; outputs in `out/`).
 
-**Outcome.** Open; pre-registered. Measured so far (A0 items 1 and 2): standing declarations occur on every observed reference day, from 6 marks (day 130, 2026 day 147) to 965 (day 129); the simulator has none. The emitted phase clock of a marked satellite steps at the declaration's first epoch (median 0.7 mm, 90th percentile 23 mm, up to metres in hour 1, against 0.46 mm on unmarked epochs), stays at the unmarked level while the declaration stands, and does not step at an ordinary release (33 releases, median 0.36 mm, largest 2.3 mm); a cold-bound release, which re-seeds the carried ambiguity, does (median 4.7 mm, refloats 179 and 330 mm).
+**Outcome.** Open; pre-registered. Measured so far (A0 items 1 and 2): standing declarations occur on every observed reference day, from 6 marks (day 130, 2026 day 147) to 965 (day 129); the simulator has none. The emitted phase clock of a marked satellite steps at the declaration's first epoch (median 0.7 mm, 90th percentile 23 mm, up to metres in hour 1, against 0.46 mm on unmarked epochs), stays at the unmarked level while the declaration stands, and does not step at an ordinary release (33 releases, median 0.36 mm, largest 2.3 mm); a cold-bound release, which re-seeds the carried ambiguity, does (median 4.7 mm, refloats 179 and 330 mm). Day-129 users on the product without the standing marks (A0 item 3, 17 sites): the 8,386 resets of the marked satellites at those epochs are gone, their held samples over hours 3 to 5 rise from 9,297 to 15,780, the built-in user's hours 4 and 5 fall from 32.8 / 38.0 mm to 11.7 / 6.8 mm, and the median user moves 0.0 mm in every hour.
 
 > Results are appended TO THIS FILE, below the text, under dated headings.
 
@@ -121,3 +121,30 @@ release, 8, median 4.7 mm, largest 21.0 mm; cold refloat, 2, 179 and 330 mm; no 
 The editor (`a0_edit.py`) on the simulator product: byte-identical. On the day-129 product: 965 marks removed (the
 standing marks less the first of each run; none shared with another source), 155 R lines dropped, 5,814 counter steps
 taken out, no counter without a step and none stepping by more than one at a removed mark; 88 marks remain (25 epochs).
+
+## 2026-11-23: A0 item 3, the users on the day-129 product without the standing marks
+
+Replays `D:/GnssProcessorSupport/runs_glm/_rap_glm0_129_<site>` (17 sites, 6 h, exe `gnss_processor_int1120.exe`,
+product `gates/gross_los_marks/products/f129_6_nostanding.txt`), each exit 0 to 05:59:30, against the same exe's
+replays of the unedited product `runs_irm/_rap_n20_129_<site>`. Grader `scripts/a0_user.py`, output
+`out/a0_user_f129_6.{json,txt}`. Marked satellites (any standing run): E10, E30, E33, G06, G07, G12, G13, G14, G15,
+G17, G19, G22, G24, G30. Hours 3 to 5 are 02:00 to 05:00 (the BSHM00ISR declarations stand 02:50 to 04:07).
+
+- **Events.** The user events of the marked satellites (clock, code-bias or phase-bias reset) at the epochs whose mark
+  was removed fall from 8,386 to 0 over the 17 sites (WTZZ00DEU 1,780, BADG 1,192); every other event of those
+  satellites over hours 3 to 5 is the same in count at every site.
+- **Held samples of the marked satellites, hours 3 to 5** (43,303 rows in both): 15,780 against 9,297 (tight rule:
+  shared minimum or 0 < amb_var <= 1e-6 m2); 5,843 against 5,180 (registered rule). Fewer at STPM (304 against 368)
+  and CEDU (21 against 22), and under the registered rule at BADG (1,272 against 1,326).
+- **Held-epoch share from hour 2** (tight rule): WTZZ00DEU 0.865 against 0.598, WUH2 0.840 against 0.667, UTQI 0.425
+  against 0.210, ANMG 0.082 against 0.058; STPM 0.528 against 0.670; the other 12 within 0.003.
+- **3D median by hour, edited minus reference.** Median over the 17 sites 0.0 mm in every hour; mean +0.3, 0.0, 0.0,
+  -4.7, -0.9, -0.2 mm; the median over hours 2 to 6 per site lies from -3.0 mm (BADG) to +4.2 mm (UTQI). Hours 4 and
+  5: WTZZ00DEU 11.7 / 6.8 mm against 32.8 / 38.0 mm, ASCG -38.4 / -10.0, BADG -26.6 / -6.8, WUH2 +10.0 / -15.4 (+13.8
+  in hour 6), STPM -7.9 / +5.8, ANMG +4.8 / +37.8 (-22.0 in hour 6). ANMG fixes nothing in either run (float error 32
+  to 131 mm in both); the difference changes sign at 4.75 h, a float path move. Hour 1: DAV1 +12.4, WUH2 -6.1, BADG -1.7
+  mm (hour-1 cold declarations of two epochs, whose second mark is removed). Hours 2 and 3 within 0.4 mm everywhere.
+
+Reading, reported without a bound as registered: the standing marks cost the users the marked satellites' holds for
+the declaration's duration and, at the built-in user, about 2 to 3 cm in hours 4 and 5; removing them moves the
+median user by nothing and the mean by -4.7 mm in hour 4. STPM's lower held share is listed, not traced.
