@@ -825,7 +825,7 @@ namespace GnssProcessor {
          *        (absent station) can refuse the stale entry instead of acting on
          *        an old restart.
          */
-        struct WuRestart { double gap_s{0.0}; /**< Gap that tripped the horizon (s); negative for an out-of-order epoch. */ double epoch_s{0.0}; /**< Continuous GPS seconds at which the restart happened. */ bool resume_seed{false}; /**< The first seed of the satellite in a resumed run whose accumulators were not restored (@ref setSeedAsRestart), not a gap. */ };
+        struct WuRestart { double gap_s{0.0}; /**< Gap that tripped the horizon (s); negative for an out-of-order epoch. */ double epoch_s{0.0}; /**< Continuous GPS seconds at which the restart happened. */ };
         /**
          * @brief The restart ledger: filled only in accumulated mode (fractional
          *        mode has no restart decision), keyed by satellite, overwritten
@@ -842,18 +842,6 @@ namespace GnssProcessor {
         const std::map<std::string, WuRestart>& wuRestarts() const { return wu_restarts_; }
         /// @brief Clear the restart ledger (called by the consumer's drain).
         void clearWuRestarts() { wu_restarts_.clear(); }
-        /**
-         * @brief Record each satellite's first seed as a restart (accumulated mode): set by a warm resume whose
-         *        station memory section was absent or refused (network/state/ResumeHoldGuard.hpp).
-         *
-         * The resumed run then holds no accumulator for any satellite, so its first epoch of a satellite seeds the
-         * accumulator at the raw angle where the uninterrupted run continued its unwrapped angle: the same step as a
-         * restart past the continuity horizon, which the ledger's response answers.  Each satellite seeds once, so
-         * each enters the ledger once (with gap 0 and @c resume_seed set).
-         *
-         * @param on True to record the seeds; false (default) leaves a seed silent.
-         */
-        void setSeedAsRestart(bool on) { seed_as_restart_ = on; }
 
         /**
          * @brief One satellite's wind-up accumulator after its latest epoch (accumulated mode).
@@ -917,8 +905,6 @@ namespace GnssProcessor {
         /// Restart ledger, §10.4 (see @ref wuRestarts).  Written from the const
         /// computePhaseWindUp, hence mutable, as for the census.
         mutable std::map<std::string, WuRestart> wu_restarts_;
-        /// First seeds recorded as restarts (@ref setSeedAsRestart); false by default.
-        bool seed_as_restart_{false};
         bool   wu_census_on_{false};
         double wu_census_gap_s_{300.0};
         double wu_census_carry_gap_s_{0.0};

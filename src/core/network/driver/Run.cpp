@@ -344,9 +344,6 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // (absent or refused): the wind-up accumulators restart at this run's first epoch, so a restored hold may sit one
     // whole turn off.  A no-op otherwise (network/state/ResumeHoldGuard.hpp).
     networkResumeHoldGuardRelease(run);
-    // Under the same condition, with the station memory restore armed: each station's model records its first wind-up
-    // seeds as restarts, so the restart response refloats the restored ambiguity carries (step (b') of card RSG).
-    networkResumeSeedRestartArm(run);
     // Event harness: arms the scripted-fault schedule.  It
     // comes after the warm resume because the injector is outside the resume
     // fingerprint, and its "ARMED" banner must not be mistaken for restored state.

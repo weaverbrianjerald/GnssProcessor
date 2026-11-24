@@ -382,14 +382,6 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   C.resume_hold_guard_why == 1 ? "refused" : (C.resume_hold_guard_why == 2 ? "absent" : "not restored"),
                   C.resume_hold_guard_events_written);
     }
-    if (ctx.counters.resume_seed_why != 0) {
-        const auto& C = ctx.counters;
-        log->warn("Network (resume seed restart): the station memory section {}; the first wind-up seeds of {} "
-                  "station(s) entered the restart ledger, against {} ambiguity carr(y|ies) restored (the refloats are "
-                  "on the wind-up restart response's line); {} seam event(s).",
-                  C.resume_seed_why == 1 ? "refused" : "absent", C.resume_seed_restart_stations,
-                  C.resume_seed_amb_carries, C.resume_seed_events_written);
-    }
     // The parked carries (network.state_snapshot_park_capture, network.resume_park_restore), beside the station
     // memory line.  The re-admissions they seed are counted by the READMIT lines of the run.
     if (config_.networkStateSnapshotParkCapture() || config_.networkResumeParkRestore()) {

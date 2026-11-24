@@ -2013,9 +2013,6 @@ namespace GnssProcessor {
                 // First epoch this satellite is seen: seed the accumulator
                 // with the raw atan2 angle (nothing to unwrap against yet).
                 prev_windup_[satellite] = { windUp_c, epoch_s, epoch_s };
-                // A resumed run without its accumulators: the seed stands where the uninterrupted run continued its
-                // unwrapped angle, the step of a restart, so it enters the restart ledger for the same response.
-                if (seed_as_restart_) wu_restarts_[satellite] = { 0.0, epoch_s, true };
             } else if (epoch_s == pw_it->second.epoch_s) {
                 // Same epoch.  computePhaseWindUp() is called once per signal
                 // and once per measurement-rebuild / relinearization pass; the

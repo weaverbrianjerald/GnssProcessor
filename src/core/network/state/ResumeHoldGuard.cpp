@@ -11,9 +11,6 @@
 #include "network/diag/RunTraces.hpp"
 #include "network/driver/Epoch.hpp"
 #include "network/driver/Run.hpp"
-#include "model/PppModel.hpp"
-#include "network/driver/RunTypes.hpp"   // NetStation (the models)
-#include "network/state/Entities.hpp"
 #include "network/state/RunContext.hpp"
 
 #include <fmt/format.h>
@@ -22,7 +19,6 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace GnssProcessor {
 
@@ -73,56 +69,11 @@ void networkResumeHoldGuardRelease(NetworkRun& run) {
               holdGuardWhy(why), n, systems);
 }
 
-void networkResumeSeedRestartArm(NetworkRun& run) {
-    std::vector<NetStation>& stations = run.setup.stations;   // written: each model's seed rule
-    auto& counters = run.ctx.counters;                         // written: the step's counters
-    const net::ArcTable& arc_rows = run.ctx.entities.arcs;
-    const bool accumulated = run.config.accumulatePhaseWindUp();
-    const bool armed = run.config.networkResumeStationMemoryRestore();
-    const std::shared_ptr<spdlog::logger>& log = run.log;
-    // ---- End of the bindings ----
-    const bool missing = counters.station_memory_refused > 0 || counters.station_memory_absent > 0;
-    if (!accumulated || !armed || counters.station_memory_restored > 0 || !missing) return;
-    // The resumed run holds no wind-up accumulator: each satellite's first epoch seeds it at the raw angle where the
-    // uninterrupted run continued its unwrapped angle, the step of an accumulator restart.  Each station's model
-    // records that seed in its restart ledger, and the restart response (network.cycle_slip.windup_restart_refloat)
-    // refloats the arcs' carries as it does for every restart: one rule for one event.
-    long long carries = 0;
-    net::forEach(arc_rows, &net::ArcState::amb, [&](const ArcId&, const LocalCarry&) { ++carries; });
-    long long n = 0;
-    for (NetStation& st : stations) {
-        if (!st.model) continue;
-        st.model->setWindUpSeedAsRestart(true);
-        ++n;
-    }
-    counters.resume_seed_restart_stations = n;
-    counters.resume_seed_amb_carries = carries;
-    counters.resume_seed_why = counters.station_memory_refused > 0 ? 1 : 2;
-    log->warn("Network (resume seed restart): the station memory section was {}: no wind-up accumulator came back, so "
-              "the first seed of every satellite at {} station(s) enters the restart ledger and the restart response "
-              "refloats the arcs' carries ({} ambiguity carr(y|ies) restored){}.",
-              holdGuardWhy(counters.resume_seed_why), n, carries,
-              run.config.networkCycleSlipWindupRestartRefloat()
-                  ? std::string()
-                  : std::string("; network.cycle_slip.windup_restart_refloat is OFF, so nothing responds"));
-}
-
 void networkResumeHoldGuardSeamEvent(NetworkRun& run, const NetworkEpoch& ep) {
     auto& counters = run.ctx.counters;   // written: the event's count
     NetworkRunTraces& traces = run.traces;
     const GnssTime& t = ep.se.time;
     // ---- End of the bindings ----
-    if (counters.resume_seed_why != 0 && counters.resume_seed_events_written == 0) {
-        // The seed rule is a decoupling edge too: one event with the population the restart response refloats; each
-        // refloat is the response's own T0_windup row (detail "resume seed without the accumulators").
-        traces.emitEvent(t, "RESUME", "seed_restart_arm", "", "", static_cast<double>(counters.resume_seed_amb_carries),
-                         std::nullopt, "armed",
-                         fmt::format("stations={};amb_carries_restored={};station_memory={};each satellite's first "
-                                     "seed enters the restart ledger and its arcs are refloated by the restart response",
-                                     counters.resume_seed_restart_stations, counters.resume_seed_amb_carries,
-                                     holdGuardWhy(counters.resume_seed_why)));
-        ++counters.resume_seed_events_written;
-    }
     if (counters.resume_hold_guard_why == 0 || counters.resume_hold_guard_events_written > 0) return;
     // The release is a decoupling edge (standing invariant 7): one event at the first resumed epoch with how many
     // restored holds were released and why; each link's re-coupling is the ring fix's own gate and its HOLD event.

@@ -219,9 +219,6 @@ namespace GnssProcessor {
 		const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const;
 		/// @brief Clear the restart ledger (called when the response consumes it).
 		void clearWuRestarts();
-		/// @brief Record each satellite's first seed as a restart (see GnssCorrections::setSeedAsRestart).
-		/// @param on True to record the seeds.
-		void setWindUpSeedAsRestart(bool on);
 		/// @brief The wind-up accumulator of every satellite seen (see GnssCorrections::windUpArcs).
 		/// @return One entry per satellite, sorted by identifier; empty in fractional mode.
 		std::vector<std::pair<std::string, GnssCorrections::WindUpArc>> windUpArcs() const;

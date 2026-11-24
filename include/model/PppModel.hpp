@@ -224,10 +224,6 @@ namespace GnssProcessor {
         }
         /// @brief Clear the restart ledger (the drain's consume edge).
         void clearWuRestarts() { antenna_.clearWuRestarts(); }
-        /// @brief Record each satellite's first wind-up seed as a restart (a warm resume without the station memory;
-        ///        see GnssCorrections::setSeedAsRestart).
-        /// @param on True to record the seeds.
-        void setWindUpSeedAsRestart(bool on) { antenna_.setWindUpSeedAsRestart(on); }
         /// @brief The wind-up accumulator of every satellite this model's receiver has seen
         ///        (see GnssCorrections::windUpArcs).
         /// @return One entry per satellite, sorted by identifier; empty in fractional mode.
