@@ -197,3 +197,23 @@ posture before that date (held basis, prioritized datum, phase-bias hold; the pa
 `docs/onboarding/claude_md_history.md`) is kept generated and verified as the frozen lineages
 `golden_{field,sim}_rf0hv18`; the tools whose arms are defined on it read those (`scenario_matrix.py`,
 `prm_ab.py`, `clock_level/scb_arms.py`, `clock_level/sfr_calib.py`).
+
+## Baseline paragraph of CLAUDE.md, 2026-11-20 to 2026-11-23
+
+Replaced on 2026-11-23 by the `_arm_h` paragraph (the reference files without the CODE bias file and with the four switches of that day). Text as it stood:
+
+**Baseline of the reference files: `_rap_n20` (2026-11-20, card IRM).** Runs `D:/GnssProcessorSupport/runs_irm/_rap_n20_{f129,f130,f132,s,b}_6` (6 h, the reference files with the fixing built-in user; exe `gnss_processor_int1120.exe`, sha256[:16] de17cb83802a20c2, commit 8109a64) against same-exe frozen controls of `golden_{field,sim}_rf0hv18` (`_rap_n20c_*`); census users `_rap_n20_<doy>_<site>` (16 sites); grades `D:/GnssProcessorSupport/runs_nom/_irdu_grades/reads_2026-11-20/n20_raw.txt`. Every run exit 0, every epoch emitted. Built-in user 3D median by hour 1 to 6: field DOY 129 WTZZ00DEU 2.31 0.09 0.01 0.03 0.04 0.01 m (frozen control 0.06 0.01 0.02 0.01 0.02 0.01), DOY 130 2.06 0.11 0.02 0.04 0.04 0.04 m, DOY 132 0.60 0.05 0.03 0.03 0.02 0.01 m; sim SZZ000SIM 0.68 0.10 0.03 0.03 0.02 0.02 m (control 0.10 0.03 0.04 0.02 0.02 0.01); BeiDou lineage 0.03 0.02 0.02 0.02 0.02 0.02 m. Sim truth audit: 406,237 held link-epochs right, 0 wrong, 0 wrong decisions. Held share from hour 3: field DOY 129 GPS 80.7 to 84.0 %, Galileo 81.3 to 86.7 % (DOY 130 Galileo 69.9 to 79.9 %, the low one); sim 89 to 92 %. Census, hours 2 to 6 paired against the frozen control: +1.4 cm (DOY 129), +1.9 cm (130), +1.4 cm (132); hour 1 +0.50 to +0.61 m (network and user start cold together). Reading: from hour 3 the reference equals the frozen one at the built-in user; hours 1 and 2 are slower, so the reference's user numbers are not comparable with `_rf0hv18` there. The two keys armed on 2026-11-20 move nothing where no event occurs: the 6 h pairs `runs_irm/_rap_la4_{f129,s}_6` (tracking-break response armed) and `runs_irm/_rap_cp1_{f129,s}_6` (both keys armed, engine of 7e4ea01) are identical in products and every trace to `_rap_n20_{f129,s}_6`. The adoption of 2026-11-22 leaves these numbers unchanged: the 6 h runs `runs_irm/_rap_a22h_{f129,f130,f132,s}_6` (the regenerated reference files, code-bias gap response armed, 4 threads, exe `gnss_processor_int1122.exe`, sha256[:16] a0fadbb1564612b9) meet no code-bias gap, equal their same-exe controls with the response off (`_rap_a22hc_*`) in products and every trace, and give the built-in user by hour, the held shares and the sim truth audit (406,237 right, 0 wrong) of `_rap_n20`; products are identical to `_rap_n20` on DOY 129, 132 and the sim, and on DOY 130 they part from 5 h 25 min by one release of the tracking-break response (KIT300UZB-G22; the `_rap_n20` day files lacked the two keys of 2026-11-20; with those keys off, `_rap_a22hk_f130_6` equals `_rap_n20_f130_6`), the user moving 0.1 mm at most (report: `D:/GnssProcessorSupport/gates/adopt_2026-11-22/ADOPTED.md`). The OWED paragraph it replaces and the 2 h day check of 2026-11-19: `docs/onboarding/claude_md_history.md`.
+
+## "Sim start" bullet of CLAUDE.md, to 2026-11-23
+
+Replaced on 2026-11-23, when the simulator reference file took its start (order 4). Text as it stood:
+
+- **Sim start.** The sim golden starts inside the fixture's start artifact: grade sim level,
+  ignition and hour 1 from 00:30:15 (`start_offset_hours` 0.504167). Every `start_offset_hours`
+  keeps the half-epoch back-off (bare hours sit on a double-residue boundary).
+
+## Test-suite measurement of CLAUDE.md, 2026-11-20 to 2026-11-23
+
+Replaced on 2026-11-23 by the measurement of the round of that day (six shards). Text as it stood:
+
+Debug `gnss_tests.exe`: 5,080 cases in 683 suites, 4,986 passed, 94 skipped, 0 failed (measured 2026-11-20 on 5207fdc, 3046 s; `D:/GnssProcessorSupport/gates/run_queue/int_5207fdc_suite.txt`); `gnss_simulator_selftest` 99 of 99 (measured 2026-11-02, card BDG gate G5); re-measure with the Debug build.
