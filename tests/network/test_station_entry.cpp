@@ -117,7 +117,13 @@ void addAnchor(NetworkNormalEquations& neq) {
 
 TEST(StationEntryConfig, OffByDefaultAndLoadedOn) {
     GnssConfig off, on;
-    ASSERT_TRUE(loadRefWith([](nlohmann::json&) {}, off, "off"));
+    // The loader's default: the two keys left out of the file.  The simulator reference file itself arms
+    // station_single_band_park since 2026-11-23 (the author's "Yes, arm all four"), so the default is read with
+    // the keys erased, not from the file as it stands.
+    ASSERT_TRUE(loadRefWith([](nlohmann::json& j) {
+        j["network"].erase("station_single_band_park");
+        j["network"].erase("station_entry_cold");
+    }, off, "off"));
     EXPECT_FALSE(off.getNetworkConfig().station_single_band_park);
     EXPECT_FALSE(off.getNetworkConfig().station_entry_cold);
     ASSERT_TRUE(loadRefWith([](nlohmann::json& j) {
