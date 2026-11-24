@@ -91,6 +91,10 @@ struct StateSnapshotCounters {
     long long resume_hold_guard_released_gal = 0;   ///< of them, Galileo links
     long long resume_hold_guard_why          = 0;   ///< 0 the guard did not act; the station memory section 1 refused, 2 absent, 3 not restored
     long long resume_hold_guard_events_written = 0; ///< seam events written
+    long long resume_seed_restart_stations   = 0;   ///< stations whose first wind-up seeds were set to enter the restart ledger
+    long long resume_seed_amb_carries        = 0;   ///< restored ambiguity carries at the resume, the population that response refloats
+    long long resume_seed_why                = 0;   ///< 0 not set; the station memory section 1 refused, 2 absent
+    long long resume_seed_events_written     = 0;   ///< seam events written
 };
 
 } // namespace GnssProcessor

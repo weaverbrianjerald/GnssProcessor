@@ -28,7 +28,14 @@
 
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
+#include <Eigen/Dense>
+
+#include "common/Constants.hpp"
+#include "common/GnssTypes.hpp"
+#include "corrections/GnssCorrections.hpp"
+#include "math/Coordinates.hpp"
 #include "network/ar/RingFix.hpp"
+#include "network/state/Entities.hpp"
 #include "network/driver/Run.hpp"
 #include "network/state/ChainMemory.hpp"
 #include "network/state/ResumeHoldGuard.hpp"
@@ -223,5 +230,89 @@ TEST(ResumeHoldGuardRelease, NothingIsReleasedWithTheStationMemoryWithoutAChainS
         networkResumeHoldGuardRelease(leg.fx->run());
         EXPECT_EQ(leg.held(), 0);
         EXPECT_EQ(leg.fx->ctx().counters.resume_hold_guard_why, 1);
+    }
+}
+
+// ---- Step (b'): the first wind-up seeds of a resumed run without its accumulators ------------------------
+
+namespace {
+
+/// One accumulated wind-up call for @p sat at @p dt_s (a station at 40 N, a GPS satellite overhead, a fixed Sun).
+double windUpCall(GnssCorrections& gc, const std::string& sat, double dt_s) {
+    const Eigen::Vector3d rx = Coordinates::llhToEcef(40.0 * Constants::PI / 180.0, -105.0 * Constants::PI / 180.0, 1650.0);
+    const Eigen::Vector3d sv = rx + 20200000.0 * rx.normalized() + Eigen::Vector3d(1.0e6, 2.0e6, 0.0);
+    const Eigen::Vector3d sun = sv + 1.495978707e11 * Eigen::Vector3d(0.6, 0.8, 0.0);
+    return gc.computePhaseWindUp(sat, System::GPS, rx, sv, Constants::GPS_L1_WAVELENGTH,
+                                 GnssTime{2300, 100000.0 + dt_s}, sun, Eigen::Vector3d::Zero(), /*accumulate=*/true,
+                                 /*max_gap_s=*/300.0);
+}
+
+}  // namespace
+
+TEST(ResumeSeedRestart, AFirstSeedEntersTheRestartLedgerOnlyWhenSet) {
+    LogManager log;
+    GnssCorrections plain(log);
+    windUpCall(plain, "G30", 0.0);
+    EXPECT_TRUE(plain.wuRestarts().empty());   // a seed is silent by default
+    GnssCorrections resumed(log);
+    resumed.setSeedAsRestart(true);
+    windUpCall(resumed, "G30", 0.0);
+    windUpCall(resumed, "G07", 0.0);
+    ASSERT_EQ(resumed.wuRestarts().size(), 2u);
+    const GnssCorrections::WuRestart& r = resumed.wuRestarts().at("G30");
+    EXPECT_TRUE(r.resume_seed);
+    EXPECT_EQ(r.gap_s, 0.0);
+    EXPECT_EQ(r.epoch_s, 2300 * 604800.0 + 100000.0);
+    // Each satellite seeds once: the next epochs unwrap and add nothing.
+    resumed.clearWuRestarts();
+    windUpCall(resumed, "G30", 30.0);
+    windUpCall(resumed, "G07", 30.0);
+    EXPECT_TRUE(resumed.wuRestarts().empty());
+}
+
+TEST(ResumeSeedRestart, TheGuardSetsTheRuleOnlyWhenTheStationMemorySectionIsAbsentOrRefused) {
+    const Loaded acc = loadGuardConfig("seed", kAccumulated, std::string(kChain) + kStationMemory);
+    ASSERT_TRUE(acc.ok) << acc.text;
+    const auto putCarries = [](GuardRun& r) {
+        net::putArcAmb(r.fx->ctx().entities, 0, "G05_L1C", &net::ArcState::amb);
+        net::putArcAmb(r.fx->ctx().entities, 1, "E11_L5Q", &net::ArcState::amb);
+    };
+    {
+        GuardRun leg("seed_abs", acc.config);
+        putCarries(leg);
+        leg.fx->ctx().counters.station_memory_absent = 1;
+        networkResumeSeedRestartArm(leg.fx->run());
+        const auto& C = leg.fx->ctx().counters;
+        EXPECT_EQ(C.resume_seed_why, 2);
+        EXPECT_EQ(C.resume_seed_amb_carries, 2);
+        EXPECT_EQ(C.resume_seed_restart_stations, 0);   // the test stations carry no model
+        EXPECT_TRUE(contains(leg.text.str(), "the station memory section was absent"));
+    }
+    {
+        GuardRun leg("seed_ref", acc.config);
+        putCarries(leg);
+        leg.fx->ctx().counters.station_memory_refused = 1;
+        networkResumeSeedRestartArm(leg.fx->run());
+        EXPECT_EQ(leg.fx->ctx().counters.resume_seed_why, 1);
+    }
+    {
+        GuardRun leg("seed_ok", acc.config);
+        putCarries(leg);
+        leg.fx->ctx().counters.station_memory_restored = 1;
+        networkResumeSeedRestartArm(leg.fx->run());
+        EXPECT_EQ(leg.fx->ctx().counters.resume_seed_why, 0);
+    }
+    {
+        GuardRun leg("seed_cold", acc.config);   // no resume: no section counted at all
+        networkResumeSeedRestartArm(leg.fx->run());
+        EXPECT_EQ(leg.fx->ctx().counters.resume_seed_why, 0);
+    }
+    {
+        const Loaded frac = loadGuardConfig("seed_frac", "", kChain);
+        ASSERT_TRUE(frac.ok) << frac.text;
+        GuardRun leg("seed_frac", frac.config);
+        leg.fx->ctx().counters.station_memory_absent = 1;
+        networkResumeSeedRestartArm(leg.fx->run());
+        EXPECT_EQ(leg.fx->ctx().counters.resume_seed_why, 0);
     }
 }

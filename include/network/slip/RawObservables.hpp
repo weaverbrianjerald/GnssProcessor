@@ -998,6 +998,8 @@ struct SlipQcCounters {
     long long wu_restart_beyond_carry{0};  ///< ...gap exceeded the carry horizon: the carry ended with the gap, so no response is needed.
     long long wu_restart_stale{0};         ///< ...ledger entry from an earlier epoch (the station was absent at its restart): refused, since a response must not act on history.
     long long wu_restart_arcs{0};          ///< individual ambiguities refloated across all responses.
+    long long wu_restart_resume_seeds{0};  ///< of the restart events, first seeds of a resumed run without its accumulators (network/state/ResumeHoldGuard.hpp)
+    long long wu_restart_resume_arcs{0};   ///< ambiguities those seeds refloated
     long long wu_restart_carry_arcs{0};    ///< ...of those, arcs reached through the leveling carry (a re-entering arc with no live column).
     long long relevel_free_skips{0};       ///< Inject-site skips actually taken (arc had a live carry).
     /// Leveling-carry entries erased by the datum-slip re-reference inside the MW

@@ -1997,9 +1997,11 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                         ++qc_cnt.bridge_pend_voided;
                         pit = relevel_pend->erase(pit);
                     } else ++pit;
+            if (rec.resume_seed) ++qc_cnt.wu_restart_resume_seeds;
             if (carry_warm && matched > 0) {
                 ++qc_cnt.wu_restart_refloated;
                 qc_cnt.wu_restart_arcs += matched;
+                if (rec.resume_seed) qc_cnt.wu_restart_resume_arcs += matched;
                 if (via_carry) qc_cnt.wu_restart_carry_arcs += matched;
                 if (++n_resp <= 12)
                     detail += fmt::format("{}{}/{}", detail.empty() ? "" : ", ",
@@ -2026,7 +2028,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                                  : "diagnostic"),
                              (orc_h ? fmt::format("accumulator restart; {} arc(s); {}",
                                                   matched, orc_detail)
-                                    : fmt::format("accumulator restart; {} arc(s) marked",
+                                    : fmt::format("{}; {} arc(s) marked",
+                                                  rec.resume_seed ? "resume seed without the accumulators"
+                                                                  : "accumulator restart",
                                                   matched)));
         }
         stations[static_cast<std::size_t>(i)].model->clearWuRestarts();

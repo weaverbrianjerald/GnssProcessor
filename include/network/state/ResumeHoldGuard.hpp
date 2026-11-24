@@ -36,12 +36,29 @@ struct NetworkRun;
 void networkResumeHoldGuardRelease(NetworkRun& run);
 
 /**
+ * @brief Set every station's model to record its first wind-up seeds as restarts, when the station memory section was
+ *        absent or refused under accumulated wind-up (step (b') of card RSG).
+ *
+ * Acts only when the wind-up is accumulated, @c network.resume_station_memory_restore is armed and its section was
+ * absent or refused at this resume.  The resumed run then holds no accumulator, every restored ambiguity carry is in
+ * the writer's frame, and each satellite's first epoch seeds the accumulator a whole number of turns away from the
+ * uninterrupted run's angle: the step of an accumulator restart.  Each seed enters the model's restart ledger, and the
+ * restart response (@c network.cycle_slip.windup_restart_refloat, network/slip/SlipQc) refloats the arcs' carries as
+ * it does for every restart.  The clocks, biases, ionosphere and wet delays stay restored.  Counted; declared by
+ * @ref networkResumeHoldGuardSeamEvent.  Must run after the station memory restore and before the first epoch.
+ *
+ * @param[in,out] run The run: the stations' models and the step's counters.
+ */
+void networkResumeSeedRestartArm(NetworkRun& run);
+
+/**
  * @brief The seam event of the hold guard: one row at the first resumed epoch (a measure-only observer,
  *        @c kNetworkEpochObservers, slot Admitted).
  *
  * The row (tier @c RESUME, event @c hold_guard_release) gives the number of restored holds released, by
- * constellation, and why (the station memory section absent or refused).  Written once, and only when the guard
- * released.
+ * constellation, and why (the station memory section absent or refused).  A second row (event @c seed_restart_arm)
+ * gives the stations whose first seeds enter the restart ledger and the restored ambiguity carries.  Each written
+ * once, and only when its step acted.
  *
  * @param run The run: the guard's counters and the events trace.
  * @param ep  The epoch (its time stamps the row).

@@ -294,6 +294,10 @@ static int networkSlipWindupMwRunEnd(const NetworkRunEndView& v) {
                       "horizon and ZERO arcs refloated — the response did not act on this "
                       "run (invariant #4).",
                       qcc.wu_restart_refloated + qcc.wu_restart_no_arc);
+        if (qcc.wu_restart_resume_seeds > 0)
+            log->info("Network (wind-up restart response): {} of the restart events are first seeds of this resumed "
+                      "run, whose accumulators were not restored (network/state/ResumeHoldGuard.hpp); they refloated "
+                      "{} arc(s).", qcc.wu_restart_resume_seeds, qcc.wu_restart_resume_arcs);
     }
 
     // ---- Wind-up gap bridge (estimation.phase_windup_gap_bridge) -------------

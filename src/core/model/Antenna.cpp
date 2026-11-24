@@ -1401,6 +1401,10 @@ namespace GnssProcessor {
         gnss_corrections_.clearWuRestarts();
     }
 
+    void Antenna::setWindUpSeedAsRestart(bool on) {
+        gnss_corrections_.setSeedAsRestart(on);
+    }
+
     bool Antenna::enableWindUpTracing(const std::filesystem::path& log_dir) {
         return gnss_corrections_.enableWindUpTracing(log_dir);
     }
