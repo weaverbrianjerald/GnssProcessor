@@ -48,9 +48,12 @@ python scripts\rapid_arm.py score my_first_f2
 The run directory is `runs\_rap_my_first_f2\`: `products.txt` (the product),
 `stdout.txt`, and `logs\` (every trace, `main_log.log` included). Network runs use the
 Release build only: Debug is 50 to 100 times slower. A 2 h field arm takes about two
-minutes on an idle machine. Simulated arms start at 00:30:15
-(`--set network.start_offset_hours=0.504167`), because the simulated data's first minutes
-are an artifact. `make` refuses a `--set` key that the config loader does not read: the loader
+minutes on an idle machine. Simulated arms start at 00:30:30: the simulator reference file
+carries `network.start_offset_hours` 0.504167 itself (since 2026-11-23), because the simulated
+data's first 30 minutes carry extrapolated satellite positions, and `make` refuses a simulator
+arm that starts inside them unless `--allow-early-sim-start` says it is meant. A replay arm made
+from a network run takes `network.start_offset_hours` 0 (its products already begin at the run's
+start). Both thread keys default to 4 in an arm (`--threads N` states another count). `make` refuses a `--set` key that the config loader does not read: the loader
 ignores an unknown key without a word, so the arm would run as its base. A key the loader reads
 by a route the check cannot see is let through by naming it with `--allow-unread KEY`.
 

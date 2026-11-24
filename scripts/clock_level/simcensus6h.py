@@ -17,6 +17,9 @@ replay driver applies it from the wire's first epoch, so by default every replay
 after a wire that itself starts at 00:30:15 (card SCL2B section 9).  SIMCENSUS_FROM_START=1 sets the replay's offset to 0,
 so the replays start with the wire (byte-identical to the producer's in-loop consumer on the same station).  Keys made
 the two ways are different statistics: compare only keys made the same way.
+Since 2026-11-23 `rapid_arm.py make` takes a replay's inherited offset to 0 (a replay made from a network run's
+arm), so a key made the default way also starts with the wire, as SIMCENSUS_FROM_START=1 does; keys made the
+default way before that date started at 01:01:30 and are not comparable with keys made after it.
 """
 import csv, json, os, statistics as st, subprocess, sys
 

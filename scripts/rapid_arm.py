@@ -11,10 +11,24 @@ in parallel, and prints one scorecard.
   make   --base <arm.json> --tag <name> [--hours H] [--set key.path=value ...]
          [--drop-station NAME ...] [--add-station NAME RINEX X Y Z ...]
          [--rinex "OP;key=val;..." ...] [--allow-unread KEY ...] [--roster <roster.json>]
+         [--threads N] [--allow-early-sim-start]
   run    --tags a b c [--jobs 4] [--exe <gnss_processor exe>]      (Release exe only)
   score  <tag or run_dir> ... [--pf]
   draws  --op "OP;..." [--op ...] --ids G01,G02,...                (the constants a bias op draws)
   selftest
+
+`make` and the run window (2026-11-23, the author's "Yes, do it" on the simulator's start): both
+thread keys (processing.eigen_threads, network.parallel_max_threads) take 4 unless --set names them
+or --threads states another count, so a run copy shares the gate and the reference files keep the
+engine's own count (the outputs do not depend on it).  A simulator network arm (every station named
+...SIM) whose network.start_offset_hours is below 0.5 starts inside the fixture's first 30 minutes,
+where the satellite positions are extrapolated off the orbit table, and is refused unless --allow-
+early-sim-start says it is meant.  A replay arm (network.closed_loop.replay_products_path set) made
+from a network run's arm or a reference file takes network.start_offset_hours 0 unless --set names
+it: the run's products begin at its own start and the replay driver applies the offset again from
+the products' first epoch, so an inherited offset would skip it twice; a replay made from a replay
+keeps its offset (the user's own join).  rapid.json records each (threads_default,
+start_offset_cleared_for_replay, allow_early_sim_start).
 
 `make --roster` replaces `network.stations[].position_ecef` by the `positions` map of a roster
 file (scripts/roster_from_sinex.py writes one): a name to [x, y, z] marker coordinate, one entry
@@ -682,6 +696,59 @@ def apply_roster(net, path, dropped):
             "max_shift_mm": 1000.0 * max(shifts) if shifts else 0.0}
 
 
+THREAD_KEYS = ("processing.eigen_threads", "network.parallel_max_threads")
+DEFAULT_THREADS = 4          # a run beside others on the gate; the outputs do not depend on the count
+SIM_EARLY_START_H = 0.5      # the simulator fixture's first 30 minutes: satellite positions extrapolated off the orbit table
+
+
+def default_threads(arm, set_keys, threads):
+    """Both thread keys take `threads` (default 4) unless the caller sets the key with --set; the reference files
+    keep the engine's own count.  Returns {key: count} for the keys this function set."""
+    n = int(threads) if threads else DEFAULT_THREADS
+    rec = {}
+    for key in THREAD_KEYS:
+        if key not in set_keys:
+            set_key(arm, key, str(n))
+            rec[key] = n
+    return rec
+
+
+def is_replay(cfg):
+    return bool(((cfg.get("network") or {}).get("closed_loop") or {}).get("replay_products_path"))
+
+
+def clear_replay_offset(base, arm, set_keys):
+    """A replay arm made from a network run's arm (or a reference file) takes network.start_offset_hours 0 unless the
+    caller sets it: that run's products begin at its own start, and the replay applies the offset again from the
+    products' first epoch (ApplicationConsumerReplay), so an inherited offset would skip it twice (a simulator replay
+    started at 01:01:30 instead of 00:30:30).  A base that is itself a replay keeps its offset: there it is the user's
+    own join (an hour-3 start).  Returns the offset cleared, or None."""
+    net = arm.get("network") or {}
+    off = float(net.get("start_offset_hours") or 0.0)
+    if is_replay(arm) and not is_replay(base) and "network.start_offset_hours" not in set_keys and off > 0.0:
+        net["start_offset_hours"] = 0.0
+        return off
+    return None
+
+
+def is_simulator(cfg):
+    st = (cfg.get("network") or {}).get("stations") or []
+    return bool(st) and all(str(s.get("name", "")).endswith("SIM") for s in st)
+
+
+def early_start_guard(arm, allowed):
+    """Refuse a simulator network arm whose start lies inside the fixture's first 30 minutes (network.start_offset_hours
+    below 0.5): those epochs carry extrapolated satellite positions, and a run that starts there holds wrong integers.
+    A replay arm starts with its products and is not refused.  --allow-early-sim-start says the early start is meant."""
+    if allowed or is_replay(arm) or not is_simulator(arm):
+        return
+    off = float((arm.get("network") or {}).get("start_offset_hours") or 0.0)
+    if off < SIM_EARLY_START_H:
+        raise SystemExit(f"rapid_arm make: a simulator arm starting {off:g} h into the fixture lies inside its first "
+                         f"30 minutes (extrapolated satellite positions): set network.start_offset_hours (the "
+                         f"reference file carries 0.504167) or pass --allow-early-sim-start if the early start is meant")
+
+
 def cmd_make(a):
     allow = getattr(a, "allow_unread", None) or []
     loader_keys.refuse_unread([kv.split("=", 1)[0] for kv in a.set or []], allow=allow)
@@ -737,6 +804,10 @@ def cmd_make(a):
     for kv in a.set or []:
         k, v = kv.split("=", 1)
         set_key(arm, k, v)
+    set_keys = {kv.split("=", 1)[0] for kv in a.set or []}
+    threads_rec = default_threads(arm, set_keys, getattr(a, "threads", None))
+    cleared = clear_replay_offset(base, arm, set_keys)
+    early_start_guard(arm, getattr(a, "allow_early_sim_start", False))
     if a.hours:
         for sec in ("processing", "network"):
             if "max_duration_s" in arm.get(sec, {}):
@@ -754,6 +825,12 @@ def cmd_make(a):
         prov["roster"] = roster_rec
     if allow:
         prov["allow_unread"] = list(allow)
+    if threads_rec:
+        prov["threads_default"] = threads_rec
+    if cleared is not None:
+        prov["start_offset_cleared_for_replay"] = cleared
+    if getattr(a, "allow_early_sim_start", False):
+        prov["allow_early_sim_start"] = True
     json.dump(prov, open(rd + "/rapid.json", "w"), indent=2)
     print(f"{a.tag}: {len(net['stations'])} stations, {len(touched)} RINEX file(s) rewritten"
           + (f", {n_holes} record(s) deleted by holes" if n_holes else "")
@@ -1309,6 +1386,55 @@ def cmd_selftest(_):
         make("allowed", ["network.no_such_knob_xyz=true"], allow=["network.no_such_knob_xyz"])
         rec = json.load(open(RUNS + "/_rap_allowed/rapid.json"))
         chk(rec["allow_unread"] == ["network.no_such_knob_xyz"], "the record lists the key that was allowed")
+        # Thread count: both keys default to 4, --threads states another count, a key set with --set wins.
+        arm = json.load(open(RUNS + "/_rap_good/arm.json"))
+        chk(arm["processing"]["eigen_threads"] == 4 and arm["network"]["parallel_max_threads"] == 4,
+            "both thread keys default to 4")
+        a = argparse.Namespace(base=base, tag="thr", hours=None, set=["processing.eigen_threads=2"], drop_station=None,
+                               rinex=None, allow_unread=None, threads=8)
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_make(a)
+        arm = json.load(open(RUNS + "/_rap_thr/arm.json"))
+        chk(arm["processing"]["eigen_threads"] == 2 and arm["network"]["parallel_max_threads"] == 8,
+            "--threads states the count of a key --set does not name; a key set with --set wins")
+        # The simulator's early start: a simulator network arm starting inside the first 30 minutes is refused
+        # unless --allow-early-sim-start says it is meant; the reference file's 0.504167 passes; a replay arm made
+        # from a network arm takes offset 0 (its products start at the run's start) and is not refused; a replay
+        # made from a replay keeps its offset (the user's own join).
+        sbase = d + "/sbase.json"
+        json.dump({"network": {"stations": [{"name": "S01000SIM"}, {"name": "S02000SIM"}],
+                               "start_offset_hours": 0.504167, "closed_loop": {}}}, open(sbase, "w"))
+        s0 = d + "/s0.json"
+        json.dump({"network": {"stations": [{"name": "S01000SIM"}], "closed_loop": {}}}, open(s0, "w"))
+
+        def smake(tag, b, sets=None, early=False):
+            a = argparse.Namespace(base=b, tag=tag, hours=None, set=sets, drop_station=None, rinex=None,
+                                   allow_unread=None, allow_early_sim_start=early)
+            with contextlib.redirect_stdout(io.StringIO()):
+                cmd_make(a)
+        try:
+            smake("early", s0)
+            chk(False, "a simulator arm starting inside the first 30 minutes must be refused")
+        except SystemExit as ex:
+            chk("first 30 minutes" in str(ex) and "--allow-early-sim-start" in str(ex), f"the refusal says why: {ex}")
+        chk(not os.path.exists(RUNS + "/_rap_early"), "a refused simulator arm writes no directory")
+        smake("early_ok", s0, early=True)
+        chk(json.load(open(RUNS + "/_rap_early_ok/rapid.json")).get("allow_early_sim_start") is True,
+            "--allow-early-sim-start makes the arm and records it")
+        smake("late", sbase)
+        chk(json.load(open(RUNS + "/_rap_late/arm.json"))["network"]["start_offset_hours"] == 0.504167,
+            "the reference file's start passes and is kept")
+        smake("rep", sbase, ["network.closed_loop.replay_products_path=C:/x/products.txt"])
+        rep, rrec = json.load(open(RUNS + "/_rap_rep/arm.json")), json.load(open(RUNS + "/_rap_rep/rapid.json"))
+        chk(rep["network"]["start_offset_hours"] == 0.0 and rrec.get("start_offset_cleared_for_replay") == 0.504167,
+            "a replay made from a network arm takes offset 0, recorded")
+        smake("rep_join", sbase, ["network.closed_loop.replay_products_path=C:/x/products.txt",
+                                  "network.start_offset_hours=3"])
+        chk(json.load(open(RUNS + "/_rap_rep_join/arm.json"))["network"]["start_offset_hours"] == 3,
+            "a replay whose offset the caller sets keeps it")
+        smake("rep2", RUNS + "/_rap_rep_join/arm.json")
+        chk(json.load(open(RUNS + "/_rap_rep2/arm.json"))["network"]["start_offset_hours"] == 3,
+            "a replay made from a replay keeps its offset (the user's own join)")
         # A roster file replaces the coordinates it names and nothing else.
         rbase = d + "/rbase.json"
         json.dump({"network": {"stations": [{"name": "AAAA00XXX", "position_ecef": [1.0e6, 2.0e6, 3.0e6]},
@@ -1412,6 +1538,10 @@ def main():
     m.add_argument("--allow-unread", action="append", metavar="KEY",
                    help="let a --set key through that the loader check cannot find (repeatable); "
                         "the key must still be one the loader reads")
+    m.add_argument("--threads", type=int, metavar="N",
+                   help=f"the count both thread keys take when --set does not name them (default {DEFAULT_THREADS})")
+    m.add_argument("--allow-early-sim-start", action="store_true",
+                   help="make a simulator network arm that starts inside the fixture's first 30 minutes")
     m.set_defaults(fn=cmd_make)
     r = sub.add_parser("run")
     r.add_argument("--tags", nargs="+", required=True)
