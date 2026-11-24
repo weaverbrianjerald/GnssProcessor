@@ -945,6 +945,7 @@ add_executable(gnss_tests
     tests/network/test_ring_fix_nn_guard.cpp
     tests/network/test_ring_fix_entry_revalidate.cpp
     tests/network/test_chain_memory.cpp
+    tests/network/test_resume_station_memory_gate.cpp
     tests/network/test_station_entry.cpp
     tests/network/test_station_memory.cpp
     tests/network/test_snapshot_fingerprint_pins.cpp

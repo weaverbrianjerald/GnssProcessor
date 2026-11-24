@@ -10,6 +10,7 @@
  */
 
 #include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor
+#include "network/state/StationMemory.hpp"
 #include "network/driver/EpochObservers.hpp"
 
 #include "network/state/Entities.hpp"
@@ -57,6 +58,7 @@ struct Pinned {
 /// The table as pre-registered (scripts/nom3_designs/EP3_design.md).
 const Pinned kPinned[] = {
     {"networkParamInventoryNoteSatellites", Slot::Admitted,      &networkParamInventoryNoteSatellites},
+    {"networkStationMemoryColdStartEvent",  Slot::Admitted,      &networkStationMemoryColdStartEvent},
     {"networkLevelAuthorityCensus",         Slot::BeforeColumns, &networkLevelAuthorityCensus},
     {"networkPhaseVisibleMonitor",          Slot::AfterClockQc,  &networkPhaseVisibleMonitor},
     {"networkLedgerEmitFold",               Slot::RosterTail,    &networkLedgerEmitFold},

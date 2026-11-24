@@ -54,6 +54,7 @@
 namespace GnssProcessor {
 
 class GnssConfig;
+struct NetworkEpoch;
 struct NetworkRun;
 
 /**
@@ -102,5 +103,45 @@ std::string networkStationMemoryWrite(const NetworkRun& run, long long& n_record
  *                    counters.
  */
 void networkStationMemoryRestore(NetworkRun& run);
+
+/**
+ * @brief Why a station memory section cannot be restored, or empty when it can: its header must carry this build's
+ *        version and a fingerprint equal to the run's (@ref networkStationMemoryFingerprint).
+ * @param section The section (from its @c STMEM header), or empty when the snapshot carries none.
+ * @param config  The configuration.
+ * @return Empty when the section restores; otherwise the reason ("absent", or the header's refusal).
+ */
+std::string networkStationMemorySectionRefusal(const std::string& section, const GnssConfig& config);
+
+/**
+ * @brief Why a warm resume must not go on for the station memory, or empty when it may.
+ *
+ * Under accumulated wind-up a resume without the stations' wind-up accumulators restarts every accumulator at its
+ * first epoch, while the restored carries and held integers stay in the writer's frame: each one on an arc whose
+ * accumulator had passed half a cycle sits one whole turn off.  Releasing the restored holds (card RSG, step (b)) and
+ * refloating the restored ambiguity carries as wind-up restarts (step (b')) both left the resumed network holding
+ * integers the truth contradicts, and the latter held fewer links than a cold start from its second hour on.  So when
+ * @c network.resume_station_memory_restore is armed under accumulated wind-up and the section is absent or refused,
+ * the warm resume is refused whole: under @c network.state_snapshot_require the run stops before its first epoch,
+ * otherwise it starts cold at its first epoch (network/state/WarmResume.cpp, resumeCheckStationMemory).
+ *
+ * @param section The snapshot's station memory section, or empty.
+ * @param config  The configuration.
+ * @return Empty when the resume may go on (the restore not armed, fractional wind-up, or the section restores);
+ *         otherwise the reason.
+ */
+std::string networkStationMemoryResumeRefusal(const std::string& section, const GnssConfig& config);
+
+/**
+ * @brief The seam event of a resume refused for the station memory: one row at the run's first epoch, which starts
+ *        cold (a measure-only observer, @c kNetworkEpochObservers, slot Admitted).
+ *
+ * The row (tier @c RESUME, event @c station_memory_cold_start, action @c cold_start) names the reason.  Written once,
+ * and only when the resume was refused for it.
+ *
+ * @param run The run: the refusal's counters and the events trace.
+ * @param ep  The epoch (its time stamps the row).
+ */
+void networkStationMemoryColdStartEvent(NetworkRun& run, const NetworkEpoch& ep);
 
 }  // namespace GnssProcessor

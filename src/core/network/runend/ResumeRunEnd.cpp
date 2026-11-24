@@ -373,6 +373,13 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   C.station_memory_records_restored, C.station_memory_refused_station,
                   C.station_memory_refused_malformed, C.station_memory_refused_fractional);
     }
+    // A resume refused whole for the station memory (network/state/StationMemory.hpp): the run started cold.
+    if (ctx.counters.station_memory_cold_starts > 0)
+        log->warn("Network (station memory): the warm resume was REFUSED whole and the run started cold: the station "
+                  "memory section was {} while network.resume_station_memory_restore is armed under accumulated "
+                  "wind-up; {} seam event(s).",
+                  ctx.counters.station_memory_cold_why == 1 ? "refused" : "absent",
+                  ctx.counters.station_memory_cold_events_written);
     // The parked carries (network.state_snapshot_park_capture, network.resume_park_restore), beside the station
     // memory line.  The re-admissions they seed are counted by the READMIT lines of the run.
     if (config_.networkStateSnapshotParkCapture() || config_.networkResumeParkRestore()) {

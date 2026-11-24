@@ -5538,6 +5538,13 @@ namespace GnssProcessor {
                 *armed = false;
             }
         }
+        if (network_resume_chain_restore_ && accumulate_phase_windup_ && !network_resume_station_memory_restore_)
+            throw std::runtime_error(
+                "network.resume_chain_restore requires network.resume_station_memory_restore under "
+                "estimation.accumulate_phase_windup: the chain's memory brings back the ring fix's held integers in "
+                "the writer's frame, which carries each arc's whole wind-up turns; without the station memory every "
+                "wind-up accumulator restarts at the resumed run's first epoch, and each restored hold on an arc whose "
+                "accumulator had passed half a cycle sits one whole turn off (a hold the phase contradicts).");
         if (network_state_snapshot_station_memory_capture_)
             log->info("Network (station memory capture): every snapshot also carries the STATION MEMORY section (every "
                       "station's wind-up accumulator); a resume armed with network.resume_station_memory_restore "

@@ -1006,6 +1006,10 @@ std::string NetworkStateSnapshotIO::warmResumeRefusalMessage(bool require,
             what = "the snapshot is older than the carry-validity horizon"; break;
         case WarmResumeRefusal::EmitterRestore:
             what = "the snapshot's EMITTER section failed to restore"; break;
+        case WarmResumeRefusal::StationMemory:
+            what = "the snapshot's STATION MEMORY section is absent or refused while network.resume_station_memory_restore "
+                   "is armed under accumulated wind-up: every restored carry and held integer would sit a whole turn off "
+                   "where an accumulator had passed half a cycle"; break;
         default: break;
     }
 

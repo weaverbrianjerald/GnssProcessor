@@ -96,6 +96,7 @@
  */
 
 #include "network/state/RunContext.hpp"
+#include "network/state/StationMemory.hpp"   // networkStationMemoryResumeRefusal
 
 #include "config/GnssConfig.hpp"
 #include "common/GnssIdentity.hpp"         // letterOfSat
@@ -301,6 +302,37 @@ bool resumeCheckGate(const ResumeSeam& in, ResumeFlow& flow) {
     flow.first_live_s = first_live_s;
     flow.horizon_s = horizon_s;
     return true;
+}
+
+/**
+ * @brief Refuses the whole resume when the station memory restore is armed under accumulated wind-up and the
+ *        snapshot's section is absent or refused (network/state/StationMemory.hpp,
+ *        networkStationMemoryResumeRefusal).  Runs before anything is restored, so the run that goes on is a cold
+ *        start at its first epoch; under state_snapshot_require the run stops instead.
+ * @param in The resume seam.
+ * @return true to go on; false after the cold-start warning (a refusal under state_snapshot_require).
+ */
+bool resumeCheckStationMemory(const ResumeSeam& in) {
+    NetworkRunContext& ctx = in.ctx;
+    const NetworkStateSnapshot& snap = in.snap;
+    const std::shared_ptr<spdlog::logger>& log = in.log;
+    const auto& nc = in.config.getNetworkConfig();
+    auto& snap_path = ctx.carry.snap_path;
+    const bool cold_ok = !nc.state_snapshot_require;
+
+    const std::string why = networkStationMemoryResumeRefusal(snap.station_memory, in.config);
+    if (why.empty()) return true;
+    if (cold_ok) {
+        ++ctx.counters.station_memory_cold_starts;
+        ctx.counters.station_memory_cold_why = snap.station_memory.empty() ? 2 : 1;
+        log->warn("Network (RTB-7): state snapshot '{}' NOT warm-resumable: its station memory section is {}, and "
+                  "network.resume_station_memory_restore is armed under accumulated wind-up, so every restored carry "
+                  "and held integer would sit a whole turn off where an accumulator had passed half a cycle.  Nothing "
+                  "of the snapshot is used: COLD START (a new generation id is minted at first emit as usual).",
+                  snap_path.string(), why);
+    }
+    refuseResume(nc, WarmResumeRefusal::StationMemory, "snapshot '" + snap_path.string() + "': station memory " + why);
+    return false;
 }
 
 /**
@@ -1868,6 +1900,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
 
     if (!resumeReadSnapshot(in)) return;
     if (!resumeCheckGate(in, flow)) return;
+    if (!resumeCheckStationMemory(in)) return;
     if (!resumeEmitterLayer(in)) return;
 
     resumeSharedCarry(in);

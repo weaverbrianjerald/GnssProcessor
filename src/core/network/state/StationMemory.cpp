@@ -6,6 +6,8 @@
  */
 
 #include "network/state/StationMemory.hpp"
+#include "network/driver/Epoch.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "config/GnssConfig.hpp"
 #include "corrections/GnssCorrections.hpp"
 #include "model/PppModel.hpp"
@@ -194,6 +196,40 @@ std::string networkStationMemoryWrite(const NetworkRun& run, long long& n_record
     return os.str();
 }
 
+std::string networkStationMemorySectionRefusal(const std::string& section, const GnssConfig& config) {
+    if (section.empty()) return "absent (the writer ran without network.state_snapshot_station_memory_capture)";
+    const std::string header = section.substr(0, section.find('\n'));
+    const std::vector<std::string> h = splitFields(header);
+    const std::string live = fingerprintText(networkStationMemoryFingerprint(config));
+    if (h.size() != 3 || h[0] != "STMEM" || h[1] != kStationMemoryVersion)
+        return fmt::format("its header '{}' is not this build's ('STMEM,{},<fingerprint>')", header,
+                           kStationMemoryVersion);
+    if (h[2] != live)
+        return fmt::format("its fingerprint {} does not match this run's {}: the keys that give the saved wind-up "
+                           "angles their meaning (the wind-up posture, its continuity horizon, frame, noon-turn "
+                           "attitude or gap bridge) differ", h[2], live);
+    return {};
+}
+
+std::string networkStationMemoryResumeRefusal(const std::string& section, const GnssConfig& config) {
+    if (!config.networkResumeStationMemoryRestore() || !config.accumulatePhaseWindUp()) return {};
+    return networkStationMemorySectionRefusal(section, config);
+}
+
+void networkStationMemoryColdStartEvent(NetworkRun& run, const NetworkEpoch& ep) {
+    auto& counters = run.ctx.counters;   // written: the event's count
+    NetworkRunTraces& traces = run.traces;
+    const GnssTime& t = ep.se.time;
+    // ---- End of the bindings ----
+    if (counters.station_memory_cold_starts == 0 || counters.station_memory_cold_events_written > 0) return;
+    // A refused resume is a re-coupling edge of its own (standing invariant 7): the run starts cold here, and the row
+    // says why the saved state was not used.
+    traces.emitEvent(t, "RESUME", "station_memory_cold_start", "", "", 1.0, std::nullopt, "cold_start",
+                     counters.station_memory_cold_why == 1 ? "station memory section refused; resume refused whole"
+                                                           : "station memory section absent; resume refused whole");
+    ++counters.station_memory_cold_events_written;
+}
+
 void networkStationMemoryRestore(NetworkRun& run) {
     const GnssConfig& config = run.config;
     std::vector<NetStation>& stations = run.setup.stations;        // written: the stations' wind-up accumulators
@@ -207,17 +243,8 @@ void networkStationMemoryRestore(NetworkRun& run) {
     const std::string text = staged;
     staged.clear();
     // The header: the format version and the fingerprint of the keys that give the angles their meaning.
-    const std::string header = text.substr(0, text.find('\n'));
-    const std::vector<std::string> h = splitFields(header);
+    const std::string refusal = networkStationMemorySectionRefusal(text, config);
     const std::string live = fingerprintText(networkStationMemoryFingerprint(config));
-    std::string refusal;
-    if (h.size() != 3 || h[0] != "STMEM" || h[1] != kStationMemoryVersion)
-        refusal = fmt::format("its header '{}' is not this build's ('STMEM,{},<fingerprint>')", header,
-                              kStationMemoryVersion);
-    else if (h[2] != live)
-        refusal = fmt::format("its fingerprint {} does not match this run's {}: the keys that give the saved wind-up "
-                              "angles their meaning (the wind-up posture, its continuity horizon, frame, noon-turn "
-                              "attitude or gap bridge) differ", h[2], live);
     if (!refusal.empty()) {
         ++counters.station_memory_refused;
         log->warn("Network (station memory restore): the snapshot's station memory section is REFUSED: {}.  Nothing "
