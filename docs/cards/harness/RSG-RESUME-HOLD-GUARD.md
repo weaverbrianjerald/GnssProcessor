@@ -64,3 +64,30 @@ Every run exit 0 except the first try of the tool leg (exit 1: it was given a sn
 4. The unit cases of (b'): a first seed enters the ledger only when set, once per satellite; the guard sets the rule only when the section is absent or refused under accumulated wind-up.
 
 If reading 1 misses again, the fallback (b'') is stated before it is built: such a resume is refused under `state_snapshot_require` and cold-starts otherwise, with a counter and an event.
+
+## 2026-11-24: step (b') read: reading 1 missed on two seeds
+
+Commit `17add12`, engine `gnss_processor_rsg2.exe` (sha256[:16] 6a4d738d36c7d4c2). Every run exit 0.
+
+- **Reading 3, met.** `runs_nom/_rap_rsg_g2_{field,sim}` against `_rap_rsg_m_*`: `products.txt` identical, and the 7 differing traces differ only in run times, paths, the build stamp and wall-time columns. The loader refusal of (a) is unchanged (unit case).
+- **Reading 4, met.** `ResumeSeedRestart.*`, 2 cases; filtered suites 160 run, 147 passed, 13 designed skips, 0 failed.
+- **Reading 1, missed twice.**
+  - On the seed of `evleg_wr_s_L` (`runs_nom/evleg_rsg_bp_leg`, section absent): 681 holds released, 60 stations armed, 1,526 ambiguity carries restored, and 1,415 resume seeds refloated 1,440 arcs. The frame-free audit against the truth still finds 1,034 attributed and 526 not attributable link-epochs off, on 49 links (with the holds released alone: 2,914 on 122).
+  - That seed was written on 2026-11-22. Its "full warm" column (`evleg_rsg_bp_warm`, from `evseed_wr1_s`) had its station memory refused too (format v1) and ran the same path, giving the same counts. So the three columns were repeated from `main`'s own seed `evseed_wrc0_s4` at 03:00, with the station memory section refused by a changed fingerprint (`evleg_rsg_c0leg`):
+    - 697 holds released, and 1,466 resume seeds refloated 1,446 arcs;
+    - off: 3,480 attributed and 1,157 not attributable link-epochs on 76 links, from 03:17 on (E11 at five stations, G02 and G14 among them).
+- **Reading 2, the three columns from `evseed_wrc0_s4`** (held share GPS / Galileo, built-in user 3D median by hour from the seam; frame-free audit over the leg):
+
+| hour | degraded resume (b') | full warm start | cold start at the same epoch |
+|---|---|---|---|
+| 1 | 37.1 / 41.7 %, 0.552 m | 90.2 / 91.1 %, 0.064 m | 26.6 / 22.4 %, 0.809 m |
+| 2 | 70.0 / 80.1 %, 0.054 m | 92.1 / 90.6 %, 0.017 m | 90.3 / 89.3 %, 0.154 m |
+| 3 | 69.1 / 83.4 %, 0.035 m | 90.2 / 92.2 %, 0.022 m | 89.9 / 92.1 %, 0.039 m |
+| 4 | 71.0 / 77.9 %, 0.024 m | 88.1 / 86.8 %, 0.013 m | 82.5 / 86.8 %, 0.028 m |
+| off against the truth | 4,637 link-epochs on 76 links | 0 of 252,017 | 0 of 192,777 |
+
+**Reading.** The degraded resume keeps a quicker first hour than a cold start, but from the second hour it holds fewer links than the cold start and holds integers the truth contradicts.
+
+The refloat reaches the ambiguity carries. The off links are decided after the gate's window, and several share one satellite (E11 at five stations), which points to a satellite-side or tree state restored in the writer's frame that the refloat does not reach (the chain's restored tree pins and pinned lives, the emitter's held values, the satellite phase-bias carries). This is not shown.
+
+**The fallback (b''), stated before it is built:** when the station memory restore is armed under accumulated wind-up and its section is absent or refused, the resume is refused under `network.state_snapshot_require` (a run error before the first epoch, as for every other refusal), and otherwise the run cold-starts, with a counter and a RESUME event. The release of (b) and the seed rule of (b') would then no longer be reached and are withdrawn.
