@@ -17,9 +17,9 @@ replay driver applies it from the wire's first epoch, so by default every replay
 after a wire that itself starts at 00:30:15 (card SCL2B section 9).  SIMCENSUS_FROM_START=1 sets the replay's offset to 0,
 so the replays start with the wire (byte-identical to the producer's in-loop consumer on the same station).  Keys made
 the two ways are different statistics: compare only keys made the same way.
-Since 2026-11-23 `rapid_arm.py make` takes a replay's inherited offset to 0 (a replay made from a network run's
-arm), so a key made the default way also starts with the wire, as SIMCENSUS_FROM_START=1 does; keys made the
-default way before that date started at 01:01:30 and are not comparable with keys made after it.
+Since 2026-11-23 the default mode names the base's own offset (`--set network.start_offset_hours=<the base's
+value>`), because `rapid_arm.py make` now gives a replay made from a network run's arm offset 0: keys made the
+default way are made exactly as before.
 """
 import csv, json, os, statistics as st, subprocess, sys
 
@@ -30,6 +30,7 @@ RUNS = ROOT + '/runs'; T0 = 259200.0; NH = 6
 # SIMCENSUS_BASE to re-make or re-read one of them.
 BASE = os.environ.get('SIMCENSUS_BASE', f'{RUNS}/_rf0hv13_sim6/arm.json')
 _ST = json.load(open(BASE))['network']['stations']
+BASE_OFFSET_H = float(json.load(open(BASE))['network'].get('start_offset_hours') or 0.0)
 PICK = [f'S{i:02d}000SIM' for i in list(range(1, 58, 4)) + [60]]
 SL = [s for s in _ST if s['name'] in PICK]
 assert len(SL) == 16, len(SL)
@@ -48,6 +49,8 @@ def make(key, wire, exe):
                '--set', 'network.closed_loop.station.position_ecef=' + json.dumps(s['position_ecef'])]
         if os.environ.get('SIMCENSUS_FROM_START') == '1':
             cmd += ['--set', 'network.start_offset_hours=0']
+        elif BASE_OFFSET_H > 0.0:   # the default mode: the base's own offset, as before rapid_arm.py cleared it
+            cmd += ['--set', f'network.start_offset_hours={BASE_OFFSET_H}']
         r = subprocess.run(cmd, capture_output=True, text=True)
         assert r.returncode == 0, (tag, r.stdout[-400:], r.stderr[-400:])
         tags.append(tag)

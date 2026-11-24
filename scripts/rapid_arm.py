@@ -721,7 +721,7 @@ def clear_replay_offset(base, arm, set_keys):
     """A replay arm made from a network run's arm (or a reference file) takes network.start_offset_hours 0 unless the
     caller sets it: that run's products begin at its own start, and the replay applies the offset again from the
     products' first epoch (ApplicationConsumerReplay), so an inherited offset would skip it twice (a simulator replay
-    started at 01:01:30 instead of 00:30:30).  A base that is itself a replay keeps its offset: there it is the user's
+    started at 01:01:30 instead of 00:31:00).  A base that is itself a replay keeps its offset: there it is the user's
     own join (an hour-3 start).  Returns the offset cleared, or None."""
     net = arm.get("network") or {}
     off = float(net.get("start_offset_hours") or 0.0)

@@ -185,6 +185,11 @@ def arm_args(c, screen, hours=None, tag_prefix="", eigen_threads=None):
     if hours:
         args += ["--hours", repr(hours)]
     args += ["--set", "network.closed_loop.replay_products_path=" + c.wire(), "--set", "network.trace_consumer_sat=true"]
+    # The base's own offset, named so that rapid_arm.py make (which since 2026-11-23 gives a replay made from a
+    # network run's arm offset 0) makes the replay exactly as before.
+    off = float((json.load(open(BEDS[bed] + "/arm.json")).get("network") or {}).get("start_offset_hours") or 0.0)
+    if off > 0.0:
+        args += ["--set", "network.start_offset_hours=%r" % off]
     if site:
         sys.path.insert(0, HERE + "/clock_level")
         import msc_sites   # the census site list
@@ -315,7 +320,7 @@ def main(argv=None):
     p = sub.add_parser("wires"); common(p); p.set_defaults(fn=cmd_wires)
     p = sub.add_parser("make"); common(p, True)
     p.add_argument("--smoke", action="store_true", help="10 epochs, tags prefixed smoke_")
-    p.add_argument("--eigen-threads", type=int, help="processing.eigen_threads of the arms (default: the wire's own arm)")
+    p.add_argument("--eigen-threads", type=int, help="processing.eigen_threads of the arms (default 4 since 2026-11-23, set by rapid_arm.py make; before that the wire's own arm)")
     p.add_argument("--skip-started", action="store_true", help="leave an arm alone whose run directory already has a logs/ directory")
     p.add_argument("--jobs", type=int, default=1, help="arms made at once")
     p.set_defaults(fn=cmd_make)

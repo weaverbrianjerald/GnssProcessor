@@ -32,6 +32,9 @@ the cards above, command for command and line for line.
                    128 and 130 to 132 are under D:/GnssProcessorSupport/data_mday).
   --start-hour H   the replays start H hours into the day (network.start_offset_hours) and the hours are
                    counted from there (default 0).
+                   Since 2026-11-23 rapid_arm.py make gives a replay made from a network run's arm offset 0,
+                   so a replay starts with its products; simulator keys made before that date from a network
+                   run's arm started 30 minutes later.
   --hours N        replay length and number of graded hours (default 6).  Hours 2 to N are the settled ones.
   --duration-s S   replay length in seconds in place of --hours N for the replays (a day whose products end
                    short of N hours); N still sets the number of graded hours.
