@@ -84,6 +84,13 @@ struct StateSnapshotCounters {
     long long snap_parked_written_last = 0;   ///< parked carries the last snapshot wrote (DP lines)
     long long resume_parked_restored   = 0;   ///< parked carries put back at the resume, with their park stamps
     long long resume_parked_sats       = 0;   ///< satellites whose re-admission memory the resume set from them
+    // The resume hold guard (network/state/ResumeHoldGuard.hpp): restored ring-fix holds released when the chain
+    // section came back and the station memory section did not.
+    long long resume_hold_guard_released     = 0;   ///< restored ring-fix holds released at the resume
+    long long resume_hold_guard_released_gps = 0;   ///< of them, GPS links
+    long long resume_hold_guard_released_gal = 0;   ///< of them, Galileo links
+    long long resume_hold_guard_why          = 0;   ///< 0 the guard did not act; the station memory section 1 refused, 2 absent, 3 not restored
+    long long resume_hold_guard_events_written = 0; ///< seam events written
 };
 
 } // namespace GnssProcessor

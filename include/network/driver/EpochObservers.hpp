@@ -133,7 +133,7 @@ struct NetworkEpochObserverRow {
 };
 
 /// The number of rows of @ref kNetworkEpochObservers.
-inline constexpr std::size_t kNetworkEpochObserverCount = 27;
+inline constexpr std::size_t kNetworkEpochObserverCount = 28;
 
 /// The observers in spine order (defined in network/driver/EpochObservers.cpp).
 extern const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEpochObservers;

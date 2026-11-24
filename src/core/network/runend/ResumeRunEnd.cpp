@@ -373,6 +373,15 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   C.station_memory_records_restored, C.station_memory_refused_station,
                   C.station_memory_refused_malformed, C.station_memory_refused_fractional);
     }
+    // The resume hold guard (network/state/ResumeHoldGuard.hpp), printed whenever it acted.
+    if (ctx.counters.resume_hold_guard_why != 0) {
+        const auto& C = ctx.counters;
+        log->warn("Network (resume hold guard): {} restored ring-fix hold(s) released at the resume (GPS {}, Galileo "
+                  "{}), the station memory section {}; {} seam event(s).",
+                  C.resume_hold_guard_released, C.resume_hold_guard_released_gps, C.resume_hold_guard_released_gal,
+                  C.resume_hold_guard_why == 1 ? "refused" : (C.resume_hold_guard_why == 2 ? "absent" : "not restored"),
+                  C.resume_hold_guard_events_written);
+    }
     // The parked carries (network.state_snapshot_park_capture, network.resume_park_restore), beside the station
     // memory line.  The re-admissions they seed are counted by the READMIT lines of the run.
     if (config_.networkStateSnapshotParkCapture() || config_.networkResumeParkRestore()) {

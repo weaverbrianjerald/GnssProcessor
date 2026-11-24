@@ -1826,6 +1826,7 @@ void resumeReport(const ResumeSeam& in, ResumeFlow& flow) {
 
     const double snap_s =
         static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
+    ctx.carry.resume.snap_s = snap_s;   // the resume hold guard's release stamp
     log->info("Network (RTB-7): WARM RESUME from '{}' (written {}) — snapshot "
               "age {:.1f} s vs first live epoch (horizon {:.1f} s); generation "
               "id {} PRESERVED (first-emit minting suppressed).  Restored: {} "

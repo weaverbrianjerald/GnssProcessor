@@ -7,6 +7,7 @@
 #include "network/driver/Run.hpp"
 #include "network/state/ChainMemory.hpp"   // networkChainMemoryRestore (network.resume_chain_restore)
 #include "network/state/StationMemory.hpp" // networkStationMemoryRestore (network.resume_station_memory_restore)
+#include "network/state/ResumeHoldGuard.hpp"   // networkResumeHoldGuardRelease
 #include "network/driver/Epoch.hpp"          // NetworkEpoch (the readout's epoch)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 #include <fmt/format.h>
@@ -339,6 +340,10 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // unwrapped angles.  The stations' models are in scope only here, before the first epoch; a no-op when nothing was
     // staged.
     networkStationMemoryRestore(run);
+    // Releases every restored ring-fix hold when the chain section came back and the station memory section did not
+    // (absent or refused): the wind-up accumulators restart at this run's first epoch, so a restored hold may sit one
+    // whole turn off.  A no-op otherwise (network/state/ResumeHoldGuard.hpp).
+    networkResumeHoldGuardRelease(run);
     // Event harness: arms the scripted-fault schedule.  It
     // comes after the warm resume because the injector is outside the resume
     // fingerprint, and its "ARMED" banner must not be mistaken for restored state.

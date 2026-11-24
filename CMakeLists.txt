@@ -169,6 +169,7 @@ add_library(gnss_core STATIC
     src/core/network/state/RunFields.cpp
     src/core/network/state/StateSnapshotWrite.cpp
     src/core/network/state/ChainMemory.cpp
+    src/core/network/state/ResumeHoldGuard.cpp
     src/core/network/state/StationMemory.cpp
     src/core/network/state/BorderPrior.cpp
     src/core/network/state/BorderStash.cpp
@@ -945,6 +946,7 @@ add_executable(gnss_tests
     tests/network/test_ring_fix_nn_guard.cpp
     tests/network/test_ring_fix_entry_revalidate.cpp
     tests/network/test_chain_memory.cpp
+    tests/network/test_resume_hold_guard.cpp
     tests/network/test_station_entry.cpp
     tests/network/test_station_memory.cpp
     tests/network/test_snapshot_fingerprint_pins.cpp

@@ -22,6 +22,7 @@
  */
 
 #include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor, networkRingFixHoldEpoch, networkRingFixDecide
+#include "network/state/ResumeHoldGuard.hpp"
 #include "network/ar/RingFixDecide.hpp"   // the decision's stages
 #include "network/ar/RingFixHold.hpp"     // the hold epoch's stages
 #include "network/ar/RingFixWindow.hpp"   // the windowed residual monitor
@@ -327,6 +328,7 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&net::networkEntitiesReachSample)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkWindupArcsTrace)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkLiveRecord)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkResumeHoldGuardSeamEvent)), NetworkEpochObserver>);
 
 // The harvest by carried kind.  The orchestrator and the 19 functions it
 // calls take the epoch form and no epoch output (the harvest writes run state only); the two
