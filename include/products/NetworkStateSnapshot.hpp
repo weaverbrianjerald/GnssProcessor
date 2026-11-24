@@ -731,6 +731,7 @@ enum class WarmResumeRefusal {
     NonPositiveAge,  ///< First live epoch is at or before the snapshot epoch.
     Stale,           ///< Age beyond the carry-validity horizon.
     EmitterRestore,  ///< The emitter section failed to restore (all-or-nothing).
+    StationMemory,   ///< The station memory restore is armed under accumulated wind-up and its section is absent or refused.
     Other            ///< Any other refusal (one without a class of its own).
 };
 

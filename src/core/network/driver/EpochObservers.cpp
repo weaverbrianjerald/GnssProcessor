@@ -10,7 +10,7 @@
  */
 
 #include "network/driver/EpochObservers.hpp"
-#include "network/state/ResumeHoldGuard.hpp"
+#include "network/state/StationMemory.hpp"
 #include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor
 
 #include "network/state/Entities.hpp"
@@ -45,8 +45,8 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
     // ---- Admitted: after the admission ----
     {"networkParamInventoryNoteSatellites", "satellite ids of no modelled constellation, and SBAS",
      "network/assembly/ParamInventory.cpp", Slot::Admitted, &networkParamInventoryNoteSatellites},
-    {"networkResumeHoldGuardSeamEvent", "the resume hold guard's seam event",
-     "network/state/ResumeHoldGuard.cpp", Slot::Admitted, &networkResumeHoldGuardSeamEvent},
+    {"networkStationMemoryColdStartEvent", "a resume refused for the station memory: the cold start's seam event",
+     "network/state/StationMemory.cpp", Slot::Admitted, &networkStationMemoryColdStartEvent},
     // ---- BeforeColumns: after PASS A and the receiver phase-bias allocation ----
     {"networkLevelAuthorityCensus", "level-authority census (LV-6)",
      "network/carry/LevelAuthority.cpp", Slot::BeforeColumns, &networkLevelAuthorityCensus},

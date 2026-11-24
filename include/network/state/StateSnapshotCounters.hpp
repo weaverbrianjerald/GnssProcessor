@@ -79,18 +79,14 @@ struct StateSnapshotCounters {
     long long station_memory_gross_los_restored = 0;   ///< gross line-of-sight states (per line of sight and per station) put back
     long long station_memory_refused_station    = 0;   ///< records refused: a station this run does not hold
     long long station_memory_refused_malformed  = 0;   ///< lines refused: malformed
+    long long station_memory_cold_starts        = 0;   ///< warm resumes refused whole for the station memory (absent or refused section under accumulated wind-up): the run started cold
+    long long station_memory_cold_why           = 0;   ///< 0 none; the section 1 refused, 2 absent
+    long long station_memory_cold_events_written = 0;  ///< seam events written for it
     long long station_memory_refused_fractional = 0;   ///< records refused: a station whose model keeps no accumulator
     // The parked carries (network.state_snapshot_park_capture, network.resume_park_restore).
     long long snap_parked_written_last = 0;   ///< parked carries the last snapshot wrote (DP lines)
     long long resume_parked_restored   = 0;   ///< parked carries put back at the resume, with their park stamps
     long long resume_parked_sats       = 0;   ///< satellites whose re-admission memory the resume set from them
-    // The resume hold guard (network/state/ResumeHoldGuard.hpp): restored ring-fix holds released when the chain
-    // section came back and the station memory section did not.
-    long long resume_hold_guard_released     = 0;   ///< restored ring-fix holds released at the resume
-    long long resume_hold_guard_released_gps = 0;   ///< of them, GPS links
-    long long resume_hold_guard_released_gal = 0;   ///< of them, Galileo links
-    long long resume_hold_guard_why          = 0;   ///< 0 the guard did not act; the station memory section 1 refused, 2 absent, 3 not restored
-    long long resume_hold_guard_events_written = 0; ///< seam events written
 };
 
 } // namespace GnssProcessor

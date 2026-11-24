@@ -178,7 +178,6 @@ const std::vector<FieldDecl> kRunFields = {
     {"carry.resume.clm_raise", "clm_restore_raise_pending", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     {"carry.resume.if_pin_holds", "if_pin_holds_resume_pending", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     {"carry.resume.adm", "adm_resume_pending", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
-    {"carry.resume.snap_s", "", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     {"carry.resume.pb_seam", "resume_pb_seam_pending", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     {"carry.resume.cpl_census", "resume_cpl_census_pending", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     {"carry.resume.chain_memory", "", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},

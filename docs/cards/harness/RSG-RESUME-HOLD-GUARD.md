@@ -91,3 +91,18 @@ Commit `17add12`, engine `gnss_processor_rsg2.exe` (sha256[:16] 6a4d738d36c7d4c2
 The refloat reaches the ambiguity carries. The off links are decided after the gate's window, and several share one satellite (E11 at five stations), which points to a satellite-side or tree state restored in the writer's frame that the refloat does not reach (the chain's restored tree pins and pinned lives, the emitter's held values, the satellite phase-bias carries). This is not shown.
 
 **The fallback (b''), stated before it is built:** when the station memory restore is armed under accumulated wind-up and its section is absent or refused, the resume is refused under `network.state_snapshot_require` (a run error before the first epoch, as for every other refusal), and otherwise the run cold-starts, with a counter and a RESUME event. The release of (b) and the seed rule of (b') would then no longer be reached and are withdrawn.
+
+## 2026-11-24: step (b''), registered before its first run (on the managing session's word of that morning)
+
+Steps (b) and (b') are withdrawn: their misses stand as recorded above (the release alone left 2,914 link-epochs off on 122 links; the refloat left 1,560 and 4,637 off on two seeds and held fewer links than a cold start from the second hour). The code of (b') is reverted (`36fbb78`) and that of (b) removed with this step.
+
+**What is built.**
+- When `network.resume_station_memory_restore` is armed under `estimation.accumulate_phase_windup` and the snapshot's station memory section is absent or refused (version or fingerprint), the warm resume is refused whole in its gate, before anything is restored (`resumeCheckStationMemory`, network/state/WarmResume.cpp; the rule in `networkStationMemoryResumeRefusal`, network/state/StationMemory.hpp).
+- Under `network.state_snapshot_require` the run stops before its first epoch with the refusal `WarmResumeRefusal::StationMemory` and its reason. Otherwise it starts cold at that epoch, with the counter `station_memory_cold_starts` (reason code 1 refused, 2 absent), one `RESUME,station_memory_cold_start` event at its first epoch, and a run-end line. Nothing of the half-restored state is used.
+- The loader refusal (a) stays. The ledger rows of the two keys take the three-part note.
+
+**Proofs, fixed before the first run:**
+1. Identity with every warm-start key absent on both reference files (2 h, 4 threads, the simulator with its start) against `main`'s engine `gnss_processor_int1123k.exe`.
+2. The cold start is a cold start. The simulator leg from `evseed_wrc0_s4` at 03:00 with its station memory section refused (the fingerprint changed, as in `evleg_rsg_c0leg`) equals a run started cold at the same epoch with no snapshot at all (`evleg_rsg_c0cold`'s configuration on this engine). The comparison covers products and every trace, apart from the wall-clock fields and the RESUME event and counter. That identity is the bar, and the truth count follows from it (0 off, as `evleg_rsg_c0cold`).
+3. Under `network.state_snapshot_require` the same leg does not start: its exit code and message, as a unit case and as one run.
+4. The unit cases of (a) and of the refusal. The tools are unaffected: a leg made by `scripts/event_leg.py` (which `scripts/warm_start.py` calls) arms the station memory with its capture and resumes.

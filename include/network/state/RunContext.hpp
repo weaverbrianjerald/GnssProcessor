@@ -1268,9 +1268,6 @@ namespace GnssProcessor {
         /// distinction (the refloat is unconditional), but the event name does.
         /// Was @c NetworkCarryState::adm_resume_pending.
         bool adm{false};
-        /// The resumed snapshot's epoch (continuous GPS seconds), set by a successful warm resume; -1 otherwise.  The
-        /// resume hold guard stamps its releases with it (network/state/ResumeHoldGuard.hpp).  Never serialized.
-        double snap_s{-1.0};
         /// One-shot phase-bias seam latch (RS-4, SPEC_event_harness §21.9).  Set by
         /// @ref networkTryWarmResume beside @ref NetworkCarryState::resume_datum_first_ep on every warm resume
         /// and consumed by the first emit in NetworkEmitStore, where the emitter's restored
